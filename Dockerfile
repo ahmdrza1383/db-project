@@ -1,10 +1,18 @@
-FROM python:3.11
+# Use an official Python base image
+FROM python:3.11-slim  
 
-ENV PYTHONDONTWRITEBYTRCIDE 1
-ENV PYTHONUNBUFFERED 1
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-WORKDIR /code
-COPY requirements.txt /code/
-RUN  pip install -r requirements.txt
+# Set the working directory
+WORKDIR /code  
 
-COPY . /code/
+# Copy only requirements first (for better caching)
+COPY requirements.txt .  
+
+# Install dependencies in one efficient step
+RUN pip install --no-cache-dir -r requirements.txt  
+
+# Copy the rest of the application files
+COPY . .  

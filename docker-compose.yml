@@ -1,16 +1,33 @@
 version: '3.9'
 
 services:
-#  a container for website
+  # Django Web Application
   web:
     build: .
-    command: python /code/manage.py runserver 0.0.0.0:8000
+    command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/code
     ports:
-      - 8000:8000
-#  a container for db
-  db:
-    image:   postgres:17
+      - "8000:8000"
+    depends_on:
+      - db
     environment:
-      - "POSTGRES_HOST_AUTH_METHOD=trust"
+      - DJANGO_SETTINGS_MODULE=config.settings  # Define Django settings module
+      - DEBUG=True  # Set to False in production
+      - DATABASE_URL=postgres://postgres:@db:5432/postgres  # Example DB connection
+
+  # PostgreSQL Database
+  db:
+    image: postgres:17
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres  # Change this in production
+      POSTGRES_DB: mydatabase
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
