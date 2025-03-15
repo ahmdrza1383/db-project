@@ -14,7 +14,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings  # Define Django settings module
       - DEBUG=True  # Set to False in production
-      - DATABASE_URL=postgres://postgres:@db:5432/postgres  # Example DB connection
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/mydatabase  # Example DB connection
 
   # PostgreSQL Database
   db:
