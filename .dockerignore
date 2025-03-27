@@ -1,5 +1,11 @@
 venv
 .git/
 __pycache__
-env
+.env
 .cache
+
+.gitignore
+.git
+
+.docker
+

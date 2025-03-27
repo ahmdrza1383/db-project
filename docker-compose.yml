@@ -18,7 +18,7 @@ services:
 
   # PostgreSQL Database
   db:
-    image: postgres:17
+    image: postgres:17-alpine
     restart: always
     environment:
       POSTGRES_USER: postgres
