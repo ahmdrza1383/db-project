@@ -7,12 +7,14 @@ conn = psycopg2.connect(
     host="localhost",
     port="5432"
 )
+# for connect database on docker host should be db
+
 
 cur = conn.cursor()
 
-cur.execute("SELECT * FROM authentication_methods")
-
+cur.execute("SELECT * FROM users")
 rows = cur.fetchall()
+conn.close()
 
 for r in rows:
     print(r)

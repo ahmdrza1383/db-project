@@ -3,7 +3,7 @@ from django.contrib.auth.backends import BaseBackend
 import hashlib
 
 class CustomUser:
-    def __init__(self, username, password,name, email, phone_number, city, date_of_sign_in, profile_picture,user_role='USER', authentication_method='EMAIL'):
+    def __init__(self, username, password,name, email, phone_number, city, date_of_sign_in=None, profile_picture=None,user_role='USER', authentication_method='EMAIL'):
         self.username = username
         self.password = password
         self.name = name
@@ -38,39 +38,40 @@ class CustomUser:
                     dbname="mydatabase",
                     user="postgres",
                     password="postgres",
-                    host="localhost",
+                    host="db",
                     port="5432"
             ) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                            INSERT INTO users (username, password, name, email, phone_number, city, date_of_sign_in, profile_picture, user_role, authentication_method)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            RETURNING id
-                        """, (
+                        INSERT INTO users (username, password, name, email, phone_number, city, user_role, authentication_method)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING  username
+                    """, (
                         validated_data['username'],
                         validated_data['password'],
                         validated_data['name'],
                         validated_data['email'],
                         validated_data['phone_number'],
                         validated_data['city'],
-                        validated_data['date_of_sign_in'],
-                        validated_data['profile_picture'],
                         validated_data['user_role'],
                         validated_data['authentication_method']
                     ))
+
                     user_id = cur.fetchone()[0]
-                    return cls(user_id, **validated_data)
+                    return cls(**validated_data)
         except Exception as e:
             print("Database Error:", e)
             return None
 
+
+    @classmethod
     def get_user(self, username):
         try:
             with psycopg2.connect(
                 dbname="mydatabase",
                 user="postgres",
                 password="postgres",
-                host="localhost",
+                host="db",
                 port="5432"
             ) as conn:
                 with conn.cursor() as cur:
@@ -107,7 +108,7 @@ class CustomPostgresBackend(BaseBackend):
                 dbname="mydatabase",
                 user="postgres",
                 password="postgres",
-                host="localhost",
+                host="db",
                 port="5432"
             ) as conn:
                 with conn.cursor() as cur:
@@ -128,7 +129,7 @@ class CustomPostgresBackend(BaseBackend):
                 dbname="mydatabase",
                 user="postgres",
                 password="postgres",
-                host="localhost",
+                host="db",
                 port="5432"
             ) as conn:
                 with conn.cursor() as cur:

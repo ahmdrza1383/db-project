@@ -1,10 +1,17 @@
 from rest_framework import status
+from rest_framework.renderers import TemplateHTMLRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .serializers import CustomUserSerializer
 from .auth_backend import CustomUser
+from django.shortcuts import render
 
 class CreateUserView(APIView):
+    # renderer_classes = [TemplateHTMLRenderer]
+
+    def get(self, request):
+        return render(request, template_name='users/create_user.html')
+
     def post(self, request):
         serializer = CustomUserSerializer(data=request.data)
         if serializer.is_valid():
@@ -14,7 +21,8 @@ class CreateUserView(APIView):
             return Response({"error": "Failed to create user"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    def get(self, request, username):
+class UserView(APIView):
+    def get(self,request,username):
         user = CustomUser.get_user(username)
         if user:
             serializer = CustomUserSerializer(user)
