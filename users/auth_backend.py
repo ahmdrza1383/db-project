@@ -3,9 +3,17 @@ from django.contrib.auth.backends import BaseBackend
 import hashlib
 
 class CustomUser:
-    def __init__(self, user_id, username):
-        self.id = user_id
+    def __init__(self, username, password,name, email, phone_number, city, date_of_sign_in, profile_picture,user_role='USER', authentication_method='EMAIL'):
         self.username = username
+        self.password = password
+        self.name = name
+        self.email = email
+        self.phone_number = phone_number
+        self.city = city
+        self.date_of_sign_in = date_of_sign_in
+        self.profile_picture = profile_picture
+        self.user_role = user_role
+        self.authentication_method = authentication_method
         self.is_authenticated = False
         self.is_active = True
         self.is_staff = False
@@ -23,7 +31,73 @@ class CustomUser:
     def change_active_status(self, status):
         self.is_active = status
 
+    @classmethod
+    def create(cls, validated_data):
+        try:
+            with psycopg2.connect(
+                    dbname="mydatabase",
+                    user="postgres",
+                    password="postgres",
+                    host="localhost",
+                    port="5432"
+            ) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                            INSERT INTO users (username, password, name, email, phone_number, city, date_of_sign_in, profile_picture, user_role, authentication_method)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id
+                        """, (
+                        validated_data['username'],
+                        validated_data['password'],
+                        validated_data['name'],
+                        validated_data['email'],
+                        validated_data['phone_number'],
+                        validated_data['city'],
+                        validated_data['date_of_sign_in'],
+                        validated_data['profile_picture'],
+                        validated_data['user_role'],
+                        validated_data['authentication_method']
+                    ))
+                    user_id = cur.fetchone()[0]
+                    return cls(user_id, **validated_data)
+        except Exception as e:
+            print("Database Error:", e)
+            return None
 
+    def get_user(self, username):
+        try:
+            with psycopg2.connect(
+                dbname="mydatabase",
+                user="postgres",
+                password="postgres",
+                host="localhost",
+                port="5432"
+            ) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+                    user_data = cur.fetchone()
+
+            if user_data:
+                return create_user(user_data)
+
+        except Exception as e:
+            print("Database Error:", e)
+
+def create_user(user_data):
+    username = user_data[0]
+    password = user_data[1]
+    user_role = user_data[2]
+    name = user_data[3]
+    email = user_data[4]
+    phone_number = user_data[5]
+    city = user_data[6]
+    date_of_sign_in = user_data[7]
+    profile_picture = user_data[8]
+    authentication_method = user_data[9]
+    return CustomUser(
+        username, password, name, email, phone_number, city, date_of_sign_in, profile_picture, user_role,
+        authentication_method
+    )
 
 class CustomPostgresBackend(BaseBackend):
     def authenticate(self, request, username=None, password=None):
@@ -37,18 +111,18 @@ class CustomPostgresBackend(BaseBackend):
                 port="5432"
             ) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT id, username FROM users WHERE username = %s AND password = %s", (username, hashed_password))
+                    cur.execute("SELECT * FROM users WHERE username = %s AND password = %s", (username, hashed_password))
                     user_data = cur.fetchone()
 
             if user_data:
-                return CustomUser(user_data[0], user_data[1]).change_authentication_status(True)
+                return create_user(user_data).change_authentication_status(True)
 
         except Exception as e:
             print("Database Error:", e)
 
         return None
 
-    def get_user(self, user_id):
+    def get_user(self, username):
         try:
             with psycopg2.connect(
                 dbname="mydatabase",
@@ -58,11 +132,11 @@ class CustomPostgresBackend(BaseBackend):
                 port="5432"
             ) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT id, username FROM users WHERE id = %s", (user_id,))
+                    cur.execute("SELECT * FROM users WHERE username = %s", (username,))
                     user_data = cur.fetchone()
 
             if user_data:
-                return CustomUser(user_data[0], user_data[1])
+                return create_user(user_data)
 
         except Exception as e:
             print("Database Error:", e)

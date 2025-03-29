@@ -1,170 +1,107 @@
-CREATE TABLE roles (
-    role_id SERIAL PRIMARY KEY,
-    role VARCHAR(20) NOT NULL
-);
-
-CREATE TABLE authentication_methods (
-    authentication_method_id SERIAL PRIMARY KEY,
-    authentication_method VARCHAR(20) NOT NULL
-);
+CREATE TYPE user_role As ENUM('USER', 'ADMIN');
+CREATE TYPE authentication_method As ENUM('EMAIL', 'PHONE_NUMBER');
 
 CREATE TABLE users (
     username VARCHAR(50) PRIMARY KEY,
     password VARCHAR(100) NOT NULL,
-    role INTEGER REFERENCES roles(role_id),
+    user_role user_role NOT NULL DEFAULT 'USER',
     name VARCHAR(100),
-    email VARCHAR(100),
-    phone_number VARCHAR(15),
+    email VARCHAR(100) NOT NULL UNIQUE,
+    phone_number VARCHAR(15) UNIQUE,
     city VARCHAR(20),
     date_of_sign_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     profile_picture BYTEA,
-    authentication_method INTEGER REFERENCES authentication_methods(authentication_method_id)
+    authentication_method authentication_method NOT NULL DEFAULT 'EMAIL'
 );
 
-CREATE TABLE payment_methods (
-    payment_method_id SERIAL PRIMARY KEY,
-    payment_method VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE payment_statuses (
-    payment_status_id SERIAL PRIMARY KEY,
-    payment_status VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE reservation_statuses (
-    reservation_status_id SERIAL PRIMARY KEY,
-    reservation_status VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE report_types (
-    report_type_id SERIAL PRIMARY KEY,
-    report_type VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE report_statuses (
-    report_status_id SERIAL PRIMARY KEY,
-    report_status VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE operation_types (
-    operation_type_id SERIAL PRIMARY KEY,
-    operation_type VARCHAR(50) NOT NULL
-);
-
-CREATE TABLE facilities_of_vehicles (
-    facility_id SERIAL PRIMARY KEY,
-    facility JSONB NOT NULL
-);
-
-CREATE TABLE vehicle_types (
-    vehicle_type_id SERIAL PRIMARY KEY,
-    vehicle_type VARCHAR(50) NOT NULL
-);
+CREATE TYPE vehicle_type As ENUM('BUS', 'TRAIN', 'FLIGHT');
 
 CREATE TABLE vehicles (
     vehicle_id SERIAL PRIMARY KEY,
-    facility_id INTEGER REFERENCES facilities_of_vehicles(facility_id),
-    vehicle_type INTEGER REFERENCES vehicle_types(vehicle_type_id)
+    facility JSONB,
+    vehicle_type vehicle_type NOT NULL
 );
 
 CREATE TABLE flights (
     vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(vehicle_id) ON DELETE CASCADE,
-    airline_name VARCHAR(100),
-    flight_class VARCHAR(50),
+    airline_name VARCHAR(100) NOT NULL,
+    flight_class VARCHAR(50) NOT NULL,
     number_of_stop INTEGER CHECK (number_of_stop >= 0),
-    flight_code VARCHAR(50),
-    origin_airport VARCHAR(100),
-    destination_airport VARCHAR(100)
+    flight_code VARCHAR(50) NOT NULL,
+    origin_airport VARCHAR(100) NOT NULL,
+    destination_airport VARCHAR(100) NOT NULL
 );
 
 CREATE TABLE trains (
     vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(vehicle_id) ON DELETE CASCADE,
-    train_stars INTEGER CHECK (train_stars > 0 AND train_stars < 6),
+    train_stars INTEGER CHECK (train_stars > 0 AND train_stars < 6) NOT NULL,
     choosing_a_closed_coupe BOOLEAN
 );
 
 CREATE TABLE buses (
     vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(vehicle_id) ON DELETE CASCADE,
-    company_name VARCHAR(100),
-    bus_type VARCHAR(50),
+    company_name VARCHAR(100)  NOT NULL,
+    bus_type VARCHAR(50)  NOT NULL,
     number_of_chairs INTEGER CHECK (number_of_chairs > 0)
 );
 
 CREATE TABLE tickets (
     ticket_id SERIAL PRIMARY KEY,
     vehicle_id INTEGER REFERENCES vehicles(vehicle_id) ON UPDATE CASCADE,
-    origin VARCHAR(100),
-    destination VARCHAR(100),
-    date_and_time_of_departure TIMESTAMP,
-    date_and_time_of_arrival TIMESTAMP,
+    origin VARCHAR(100) NOT NULL,
+    destination VARCHAR(100) NOT NULL,
+    date_and_time_of_departure TIMESTAMP NOT NULL,
+    date_and_time_of_arrival TIMESTAMP NOT NULL,
     price INTEGER CHECK (price > 0),
     remaining_capacity INTEGER CHECK (remaining_capacity >= 0)
 );
 
+CREATE TYPE reservation_status As ENUM('RESERVED', 'NOT_RESERVED');
+
 CREATE TABLE reservations (
     reservation_id SERIAL PRIMARY KEY,
-    username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE,
-    ticket_id INTEGER REFERENCES tickets(ticket_id) ON UPDATE CASCADE,
-    status INTEGER REFERENCES reservation_statuses(reservation_status_id),
-    date_and_time_of_reservation TIMESTAMP,
-    reservation_seat INTEGER CHECK (reservation_seat > 0)
+    username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
+    ticket_id INTEGER REFERENCES tickets(ticket_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    reservation_status reservation_status NOT NULL DEFAULT 'NOT_RESERVED',
+    date_and_time_of_reservation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reservation_seat INTEGER CHECK (reservation_seat > 0) NOT NULL
 );
+
+CREATE TYPE payment_status As ENUM('PAID', 'NOT_PAID');
+CREATE TYPE payment_method As ENUM('CRYPTOCURRENCY', 'WALLET', 'CREDIT_CARD');
 
 CREATE TABLE payments (
     payment_id SERIAL PRIMARY KEY,
-    username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE,
+    username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
     reservation_id INTEGER REFERENCES reservations(reservation_id) ON UPDATE CASCADE,
     amount_paid INTEGER CHECK (amount_paid > 0),
-    payment_status INTEGER REFERENCES payment_statuses(payment_status_id),
+    payment_status payment_status NOT NULL DEFAULT 'NOT_PAID',
     date_and_time_of_payment TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    payment_method INTEGER REFERENCES payment_methods(payment_method_id)
+    payment_method payment_method NOT NULL DEFAULT 'CREDIT_CARD'
 );
 
+CREATE TYPE report_type As ENUM('PAYMENT', 'TRAVEL_DELAY', 'CANCEL', 'OTHER');
+CREATE TYPE report_status As ENUM('CHECKED', 'UNCHECKED');
 
 CREATE TABLE reports (
     report_id SERIAL PRIMARY KEY,
-    username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE,
+    username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE ON DELETE CASCADE,
     reservation_id INTEGER REFERENCES reservations(reservation_id) ON UPDATE CASCADE,
-    report_type INTEGER REFERENCES report_types(report_type_id),
+    report_type report_type NOT NULL,
     report_text TEXT,
-    report_status INTEGER REFERENCES report_statuses(report_status_id)
+    report_status report_status NOT NULL DEFAULT 'UNCHECKED'
 );
+
+CREATE TYPE operation_type As ENUM('BUY', 'CANCEL');
 
 CREATE TABLE reservations_history (
     username VARCHAR(50) REFERENCES users(username) ON UPDATE CASCADE,
     reservation_id INTEGER REFERENCES reservations(reservation_id) ON UPDATE CASCADE,
     date_and_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    operation_type INTEGER REFERENCES operation_types(operation_type_id),
+    operation_type operation_type NOT NULL,
     PRIMARY KEY (reservation_id, username, date_and_time)
 );
 
 CREATE INDEX idx_tickets_vehicle_id ON tickets(vehicle_id);
 CREATE INDEX idx_reservations_ticket_id ON reservations(ticket_id);
 CREATE INDEX idx_payments_reservation_id ON payments(reservation_id);
-
-INSERT INTO roles (role) VALUES ('user');
-INSERT INTO roles (role) VALUES ('admin');
-
-INSERT INTO authentication_methods (authentication_method) VALUES ('email');
-INSERT INTO authentication_methods (authentication_method) VALUES ('phone_number');
-
-INSERT INTO operation_types (operation_type) VALUES ('buy');
-INSERT INTO operation_types (operation_type) VALUES ('cancel');
-
-INSERT INTO report_types (report_type) VALUES ('payment');
-INSERT INTO report_types (report_type) VALUES ('travel_delay');
-INSERT INTO report_types (report_type) VALUES ('cancel');
-INSERT INTO report_types (report_type) VALUES ('other');
-
-INSERT INTO report_statuses (report_status) VALUES ('checked');
-INSERT INTO report_statuses (report_status) VALUES ('unchecked');
-
-INSERT INTO payment_statuses (payment_status) VALUES ('paid');
-INSERT INTO payment_statuses (payment_status) VALUES ('not_paid');
-
-INSERT INTO payment_methods (payment_method) VALUES ('cryptocurrency');
-INSERT INTO payment_methods (payment_method) VALUES ('wallet');
-INSERT INTO payment_methods (payment_method) VALUES ('credit_card');
-
-INSERT INTO reservation_statuses (reservation_status) VALUES ('reserved');
-INSERT INTO reservation_statuses (reservation_status) VALUES ('not_reserved');
