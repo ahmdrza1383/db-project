@@ -146,6 +146,3 @@ CREATE TABLE requests
     date_and_time   TIMESTAMP                                                                   DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_tickets_vehicle_id ON tickets (vehicle_id);
-CREATE INDEX idx_reservations_ticket_id ON reservations (ticket_id);
-CREATE INDEX idx_payments_reservation_id ON payments (reservation_id);
