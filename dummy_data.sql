@@ -90,7 +90,7 @@ INSERT INTO users (username, password, user_role, name, email, phone_number, cit
 ('user3333', 'hashed_password_38', 'USER', 'Mahsa Hosseini', 'mahsa.hosseini@email.com', '09112223347', 5, 'PHONE_NUMBER'),
 ('user3434', 'hashed_password_39', 'USER', 'Kaveh Ahmadi', 'kaveh.ahmadi@email.com', '09125556680', 6, 'EMAIL'),
 ('user3535', 'hashed_password_40', 'USER', 'Sima Rezaei', 'sima.rezaei@email.com', '09138889903', 7, 'PHONE_NUMBER'),
-('user3636', 'hashed_password_41', 'USER', 'Behnam Mohammadi', 'behnam.mohammadi@email.com', '09141112237', 8, 'PHONE_NUMBER'),
+('user3636', 'hashed_password_41', 'USER', 'Behnam Mohammadi', 'behnam.mohammadi2@email.com', '09141112237', 8, 'PHONE_NUMBER'),
 ('user3737', 'hashed_password_42', 'USER', 'Parisa Karimzadeh', 'parisa.karimzadeh@email.com', '09154445570', 9, 'EMAIL'),
 ('user3838', 'hashed_password_43', 'USER', 'Kamran Ahmadi', 'kamran.ahmadi@email.com', '09167778893', 10, 'PHONE_NUMBER'),
 ('user3939', 'hashed_password_44', 'USER', 'Niloofar Hosseini', 'niloofar.hosseini@email.com', '09170001126', 11, 'PHONE_NUMBER'),
@@ -516,7 +516,7 @@ INSERT INTO payments (username, reservation_id, amount_paid, payment_status, dat
 ('user6161', 64, 1400000, 'PAID', '2025-05-15 11:15:00', 'WALLET'), -- user6161: PHONE_NUMBER
 ('user6262', 65, 1400000, 'PAID', '2025-05-16 08:15:00', 'CREDIT_CARD'), -- user6262: EMAIL
 -- پرداخت برای رزروهای تیکت 14 (Tehran to Ahvaz - قطار، قیمت: 1300000)
-('user6363', 66, 1300000, 'PAID', '2025-05-15 10:15:00', 'ONLINE'), -- user6363: EMAIL
+('user6363', 66, 1300000, 'PAID', '2025-05-15 10:15:00', 'WALLET'), -- user6363: EMAIL
 ('user6464', 67, 1300000, 'PAID', '2025-05-15 12:15:00', 'WALLET'), -- user6464: PHONE_NUMBER
 ('user6565', 68, 1300000, 'PAID', '2025-05-16 09:15:00', 'CREDIT_CARD'), -- user6565: EMAIL
 ('user6666', 69, 1300000, 'PAID', '2025-05-16 11:15:00', 'WALLET'), -- user6666: PHONE_NUMBER
