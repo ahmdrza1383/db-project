@@ -14,7 +14,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings  # Define Django settings module
       - DEBUG=True  # Set to False in production
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/mydatabase  # Example DB connection
+      - DATABASE_URL=postgres://postgres@db:5432/mydatabase  # Example DB connection
 
   # PostgreSQL Database
   db:
@@ -23,12 +23,13 @@ services:
     container_name: mydatabase
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres  # Change this in production
       POSTGRES_DB: mydatabase
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf
     ports:
-      - "5432:5432"
+      - "5433:5432"
+    command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
 
 volumes:
   postgres_data:
