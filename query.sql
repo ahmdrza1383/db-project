@@ -1,7 +1,8 @@
 --1 without join
 select n.name from users n
     where n.username in
-        (select u.username from users u ) except  (select rh.username from reservations_history rh where rh.operation_type = 'BUY');
+        ((select u.username from users u where u.user_role = 'USER') except  (select rh.username from reservations_history rh where rh.operation_type = 'BUY' and rh.reservation_history_status = 'SUCCESSFUL'));
+
 
 --1 with join
 select u.name
@@ -13,9 +14,9 @@ select u.name
 --2 without join
 select u.name
     from users u
-        where u.username in
+        where u.user_role = 'USER' and  u.username in
             (select distinct(rh.username) from reservations_history rh
-                where rh.operation_type = 'BUY')
+                where rh.operation_type = 'BUY' and rh.reservation_history_status = 'SUCCESSFUL')
 
 --2 with join
 select u.name
