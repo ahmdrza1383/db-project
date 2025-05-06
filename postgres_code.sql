@@ -161,5 +161,9 @@ CREATE INDEX idx_reservations_history_cancel_by ON reservations_history (cancel_
 CREATE INDEX idx_reservations_history_operation_type ON reservations_history (operation_type);
 CREATE INDEX idx_users_name ON users (name);
 CREATE INDEX idx_flights_airline_name ON flights (airline_name);
+<<<<<<< HEAD
 CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
 
+=======
+CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
+>>>>>>> febd8d92c5ad0ca0393dcb33c61c40e4c516cfae

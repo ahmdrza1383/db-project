@@ -732,7 +732,6 @@ INSERT INTO reports (username, reservation_id, report_type, report_text) VALUES
 ('user2828', 31, 'CANCEL', 'نیاز به لغو رزرو به دلیل تغییر برنامه.'),
 ('user2929', 32, 'CANCEL', 'رزرو را به اشتباه ثبت کرده‌ام.');
 
-
 -- new data
 INSERT INTO users (username, password, user_role, name, email, phone_number, city, authentication_method) VALUES
 ('mehdi2121', 'hashed_password_101', 'USER', 'Mehdi Shariati', 'mehdi.shariati@email.com', '09201112233', 2, 'EMAIL'),
