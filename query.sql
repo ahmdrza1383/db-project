@@ -38,10 +38,10 @@ from users u
 
 --3
 select q.username, coalesce(q.month, 0) as month, sum(coalesce(q.amount_paid, 0)) as total_paid
-from (select k.username , extract(month from k.date_and_time_of_payment) as month, k.amount_paid
-from (select u.username, p.date_and_time_of_payment, p.amount_paid
-from (select u1.username from users u1 where u1.user_role = 'USER')u
-left join (select * from payments p1 where p1.payment_status = 'PAID')p on u.username = p.username)k)q
+from (select k.username, extract (month from k.date_and_time_of_payment) as month, k.amount_paid
+    from (select u.username, p.date_and_time_of_payment, p.amount_paid
+    from (select u1.username from users u1 where u1.user_role = 'USER') u
+    left join (select * from payments p1 where p1.payment_status = 'PAID') p on u.username = p.username) k) q
 group by q.username, q.month
 
 --4 based on the last person who purchased the ticket.
@@ -134,8 +134,73 @@ where u.username = (select username
 
 --11
 select u.name
-  from users u
-    where u.user_role = 'ADMIN';
+from users u
+where u.user_role = 'ADMIN';
+
+--12
+select u.name
+from users u
+         inner join
+     (select rh.username, count(*) as n
+      from reservations_history rh
+      where rh.operation_type = 'BUY'
+        and rh.reservation_history_status = 'SUCCESSFUL'
+      group by rh.username) k
+     on u.username = k.username
+where k.n > 1;
+
+--13
+select u.username , count(*), v.vehicle_type
+from users u
+join reservations_history rh on rh.username = u.username
+join reservations r on r.reservation_id = rh.reservation_id
+join tickets t on t.ticket_id = r.ticket_id
+join vehicles v on v.vehicle_id = t.vehicle_id
+where u.user_role = 'USER' and
+	rh.operation_type = 'BUY' and
+	rh.reservation_history_status  = 'SUCCESSFUL'
+group by u.username , v.vehicle_type
+having count(*) < 3
+
+
+--14
+select d.username
+from (select c.username, count(*) as all_buy
+      from (select *
+            from (select a.username, a.vehicle_type, count(*) as n
+                  from (select q.username, v.vehicle_type
+                        from (select g.username, t.vehicle_id
+                              from (select k.username, r.ticket_id
+                                    from (select rh1.username, rh1.reservation_id
+                                          from reservations_history rh1
+                                          where rh1.operation_type = 'BUY'
+                                            and rh1.reservation_history_status = 'SUCCESSFUL') k
+                                             inner join reservations r on r.reservation_id = k.reservation_id) g
+                                       inner join tickets t on t.ticket_id = g.ticket_id) q
+                                 inner join vehicles v on v.vehicle_id = q.vehicle_id) a
+                  group by a.username, a.vehicle_type) b) c
+      group by c.username) d
+where d.all_buy >= 3
+
+--15
+SELECT t.ticket_id,
+       t.price,
+       t.departure_start,
+       l1.city          AS origin_city,
+       l2.city          AS destination_city,
+       rh.date_and_time AS purchase_time,
+       u.username,
+       u.name
+FROM reservations_history rh
+         INNER JOIN reservations r ON rh.reservation_id = r.reservation_id
+         INNER JOIN tickets t ON r.ticket_id = t.ticket_id
+         INNER JOIN users u ON rh.username = u.username
+         INNER JOIN locations l1 ON t.origin_location_id = l1.location_id
+         INNER JOIN locations l2 ON t.destination_location_id = l2.location_id
+WHERE rh.operation_type = 'BUY'
+  AND rh.reservation_history_status = 'SUCCESSFUL'
+  AND DATE (rh.date_and_time) = CURRENT_DATE
+ORDER BY rh.date_and_time;
 
 --16
 select t.ticket_id, count(r.reservation_id) as res_count
@@ -238,17 +303,17 @@ where reservation_id in (select r.reservation_id
     );
 
 --21
-select t.ticket_id from tickets t
-join flights f on t.vehicle_id = f.vehicle_id
+select t.ticket_id
+from tickets t
+         join flights f on t.vehicle_id = f.vehicle_id
 where f.airline_name = 'Mahan Air';
 
 update tickets
 set price = price * 90 / 100
-where ticket_id  in (
-select t.ticket_id from tickets t
-join flights f on t.vehicle_id = f.vehicle_id
-where f.airline_name = 'Mahan Air'
-);
+where ticket_id in (select t.ticket_id
+                    from tickets t
+                             join flights f on t.vehicle_id = f.vehicle_id
+                    where f.airline_name = 'Mahan Air');
 
 --22
 select t.ticket_id, count(*)
