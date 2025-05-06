@@ -90,7 +90,7 @@ INSERT INTO users (username, password, user_role, name, email, phone_number, cit
 ('user3333', 'hashed_password_38', 'USER', 'Mahsa Hosseini', 'mahsa.hosseini@email.com', '09112223347', 5, 'PHONE_NUMBER'),
 ('user3434', 'hashed_password_39', 'USER', 'Kaveh Ahmadi', 'kaveh.ahmadi@email.com', '09125556680', 6, 'EMAIL'),
 ('user3535', 'hashed_password_40', 'USER', 'Sima Rezaei', 'sima.rezaei@email.com', '09138889903', 7, 'PHONE_NUMBER'),
-('user3636', 'hashed_password_41', 'USER', 'Behnam Mohammadi', 'behnam.mohammadi@email.com', '09141112237', 8, 'PHONE_NUMBER'),
+('user3636', 'hashed_password_41', 'USER', 'Behnam Mohammadi', 'behnam.mohammadi2@email.com', '09141112237', 8, 'PHONE_NUMBER'),
 ('user3737', 'hashed_password_42', 'USER', 'Parisa Karimzadeh', 'parisa.karimzadeh@email.com', '09154445570', 9, 'EMAIL'),
 ('user3838', 'hashed_password_43', 'USER', 'Kamran Ahmadi', 'kamran.ahmadi@email.com', '09167778893', 10, 'PHONE_NUMBER'),
 ('user3939', 'hashed_password_44', 'USER', 'Niloofar Hosseini', 'niloofar.hosseini@email.com', '09170001126', 11, 'PHONE_NUMBER'),
@@ -150,6 +150,7 @@ INSERT INTO users (username, password, user_role, name, email, phone_number, cit
 ('user9393', 'hashed_password_98', 'USER', 'Parisa Hosseini', 'parisa.hosseini3@email.com', '09112223353', 20, 'PHONE_NUMBER'),
 ('user9494', 'hashed_password_99', 'USER', 'Kamran Karimzadeh', 'kamran.karimzadeh2@email.com', '09125556686', 21, 'EMAIL'),
 ('user9595', 'hashed_password_100', 'USER', 'Niloofar Ahmadi', 'niloofar.ahmadi2@email.com', '09138889909', 22, 'PHONE_NUMBER');
+
 
 -- افزودن وسایل نقلیه (100 مورد)
 INSERT INTO vehicles (vehicle_type) VALUES
@@ -308,7 +309,6 @@ INSERT INTO tickets (vehicle_id, origin_location_id, destination_location_id, de
 (78, 1, 4, '2025-05-23 09:00:00', '2025-05-23 10:00:00', 400000, 5,0),  -- Tehran to Rey
 (79, 1, 5, '2025-05-24 07:30:00', '2025-05-24 12:30:00', 600000, 5,0),  -- Tehran to Isfahan
 (80, 5, 1, '2025-05-25 07:30:00', '2025-05-25 12:30:00', 600000, 5,0);  -- Isfahan to Tehran
-
 
 -- افزودن رزروها (100 رزرو)
 INSERT INTO reservations (username, ticket_id, reservation_status, date_and_time_of_reservation, reservation_seat) VALUES
@@ -516,7 +516,7 @@ INSERT INTO payments (username, reservation_id, amount_paid, payment_status, dat
 ('user6161', 64, 1400000, 'PAID', '2025-05-15 11:15:00', 'WALLET'), -- user6161: PHONE_NUMBER
 ('user6262', 65, 1400000, 'PAID', '2025-05-16 08:15:00', 'CREDIT_CARD'), -- user6262: EMAIL
 -- پرداخت برای رزروهای تیکت 14 (Tehran to Ahvaz - قطار، قیمت: 1300000)
-('user6363', 66, 1300000, 'PAID', '2025-05-15 10:15:00', 'ONLINE'), -- user6363: EMAIL
+('user6363', 66, 1300000, 'PAID', '2025-05-15 10:15:00', 'WALLET'), -- user6363: EMAIL
 ('user6464', 67, 1300000, 'PAID', '2025-05-15 12:15:00', 'WALLET'), -- user6464: PHONE_NUMBER
 ('user6565', 68, 1300000, 'PAID', '2025-05-16 09:15:00', 'CREDIT_CARD'), -- user6565: EMAIL
 ('user6666', 69, 1300000, 'PAID', '2025-05-16 11:15:00', 'WALLET'), -- user6666: PHONE_NUMBER
@@ -682,6 +682,9 @@ INSERT INTO reservations_history (username, reservation_id, date_and_time, opera
 ('ali123', 99, '2025-05-22 11:15:00', 'BUY'),
 ('sara456', 100, '2025-05-23 08:15:00', 'BUY');
 
+update reservations_history
+set "reservation_history_status" = 'SUCCESSFUL'
+
 
 -- افزودن 30 گزارش
 INSERT INTO reports (username, reservation_id, report_type, report_text) VALUES
@@ -728,3 +731,62 @@ INSERT INTO reports (username, reservation_id, report_type, report_text) VALUES
 -- گزارش‌های نوع CANCEL
 ('user2828', 31, 'CANCEL', 'نیاز به لغو رزرو به دلیل تغییر برنامه.'),
 ('user2929', 32, 'CANCEL', 'رزرو را به اشتباه ثبت کرده‌ام.');
+
+
+-- new data
+INSERT INTO users (username, password, user_role, name, email, phone_number, city, authentication_method) VALUES
+('mehdi2121', 'hashed_password_101', 'USER', 'Mehdi Shariati', 'mehdi.shariati@email.com', '09201112233', 2, 'EMAIL'),
+('narges2222', 'hashed_password_102', 'USER', 'Narges Bahrami', 'narges.bahrami@email.com', '09214445566', 3, 'PHONE_NUMBER'),
+('yasin2323', 'hashed_password_103', 'USER', 'Yasin Ghaffari', 'yasin.ghaffari@email.com', '09227778899', 4, 'EMAIL'),
+('sanaz2424', 'hashed_password_104', 'USER', 'Sanaz Mousavi', 'sanaz.mousavi@email.com', '09230001122', 5, 'PHONE_NUMBER'),
+('omid2525', 'hashed_password_105', 'USER', 'Omid Shokri', 'omid.shokri@email.com', '09243334455', 6, 'EMAIL'),
+('bahar2626', 'hashed_password_106', 'USER', 'Bahar Azizi', 'bahar.azizi@email.com', '09256667788', 7, 'PHONE_NUMBER'),
+('kianoush2727', 'hashed_password_107', 'USER', 'Kianoush Farhadi', 'kianoush.farhadi@email.com', '09269990011', 8, 'EMAIL'),
+('elnaz2828', 'hashed_password_108', 'USER', 'Elnaz Gholami', 'elnaz.gholami@email.com', '09272223344', 9, 'PHONE_NUMBER'),
+('pouya2929', 'hashed_password_109', 'USER', 'Pouya Khosravi', 'pouya.khosravi@email.com', '09285556677', 10, 'EMAIL'),
+('setareh3030', 'hashed_password_110', 'USER', 'Setareh Esmaili', 'setareh.esmaili@email.com', '09298889900', 11, 'PHONE_NUMBER'),
+('shayan3131', 'hashed_password_111', 'USER', 'Shayan Rahmani', 'shayan.rahmani@email.com', '09301112234', 12, 'EMAIL'),
+('hanieh3232', 'hashed_password_112', 'USER', 'Hanieh Shariati', 'hanieh.shariati@email.com', '09314445567', 13, 'PHONE_NUMBER'),
+('babak3333', 'hashed_password_113', 'USER', 'Babak Ghaffari', 'babak.ghaffari@email.com', '09327778890', 14, 'EMAIL'),
+('golnaz3434', 'hashed_password_114', 'USER', 'Golnaz Mousavi', 'golnaz.mousavi@email.com', '09330001123', 15, 'PHONE_NUMBER'),
+('farhad3535', 'hashed_password_115', 'USER', 'Farhad Shokri', 'farhad.shokri@email.com', '09343334456', 16, 'EMAIL'),
+('mahtab3636', 'hashed_password_116', 'USER', 'Mahtab Azizi', 'mahtab.azizi@email.com', '09356667789', 17, 'PHONE_NUMBER'),
+('rostam3737', 'hashed_password_117', 'USER', 'Rostam Farhadi', 'rostam.farhadi@email.com', '09369990012', 18, 'EMAIL'),
+('taraneh3838', 'hashed_password_118', 'USER', 'Taraneh Gholami', 'taraneh.gholami@email.com', '09372223345', 19, 'PHONE_NUMBER'),
+('khashayar3939', 'hashed_password_119', 'USER', 'Khashayar Khosravi', 'khashayar.khosravi@email.com', '09385556678', 20, 'EMAIL'),
+('parvaneh4040', 'hashed_password_120', 'USER', 'Parvaneh Esmaili', 'parvaneh.esmaili@email.com', '09398889901', 21, 'PHONE_NUMBER');
+
+INSERT INTO tickets (vehicle_id, origin_location_id, destination_location_id, departure_start, departure_end, price,total_capacity, remaining_capacity) VALUES
+(76,1,12, '2025-04-10 08:30:00', '2025-04-10 14:00:00', 3000000, 10, 3);
+
+INSERT INTO reservations (username, ticket_id, reservation_status, date_and_time_of_reservation, reservation_seat) VALUES
+('mehdi2121', 21,'RESERVED', '2025-4-8 10:00:00', 1),
+('mehdi2121', 21,'RESERVED', '2025-4-8 10:00:00', 2),
+('mehdi2121', 21,'RESERVED', '2025-4-8 10:00:00', 3),
+('narges2222', 21,'RESERVED', '2025-4-7 20:00:00', 4),
+('narges2222', 21,'RESERVED', '2025-4-7 20:00:00', 5),
+('elnaz2828', 21,'RESERVED', '2025-4-9 02:00:00', 6),
+('golnaz3434', 21,'RESERVED', '2025-4-9 23:00:00', 7),
+(NULL, 21,'NOT_RESERVED', null, 8),
+(NULL, 21,'NOT_RESERVED', null, 9),
+(NULL, 21,'NOT_RESERVED', null, 10);
+
+INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method) VALUES
+('mehdi2121', 101, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD'),
+('mehdi2121', 102, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD'),
+('mehdi2121', 103, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD'),
+('narges2222', 104, 3000000, 'NOT_PAID', '2025-04-07 16:30:00', 'WALLET'),
+('narges2222', 104, 3000000, 'PAID', '2025-04-07 20:10:00', 'CREDIT_CARD'),
+('narges2222', 105, 3000000, 'PAID', '2025-04-07 20:10:00', 'CREDIT_CARD'),
+('elnaz2828', 106, 3000000, 'PAID', '2025-04-09 02:05:00', 'CREDIT_CARD'),
+('golnaz3434', 107, 3000000, 'PAID', '2025-04-09 23:01:00', 'CREDIT_CARD');
+
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status) VALUES
+('mehdi2121', 101,  '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
+('mehdi2121', 102,  '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
+('mehdi2121', 103,  '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
+('narges2222', 104,  '2025-04-07 16:30:00', 'BUY', 'UNSUCCESSFUL'),
+('narges2222', 104,  '2025-04-07 20:10:00', 'BUY', 'SUCCESSFUL'),
+('narges2222', 105,  '2025-04-07 20:10:00', 'BUY', 'SUCCESSFUL'),
+('elnaz2828', 106,  '2025-04-09 02:05:00', 'BUY', 'SUCCESSFUL'),
+('golnaz3434', 107,  '2025-04-09 23:01:00', 'BUY', 'SUCCESSFUL');

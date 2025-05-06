@@ -1,3 +1,11 @@
+CREATE TABLE locations
+(
+    location_id SERIAL PRIMARY KEY,
+    city        VARCHAR(100) NOT NULL,
+    province    VARCHAR(100) NOT NULL,
+    UNIQUE (city, province)
+);
+
 CREATE TYPE user_role As ENUM ('USER', 'ADMIN');
 CREATE TYPE authentication_method As ENUM ('EMAIL', 'PHONE_NUMBER');
 
@@ -53,14 +61,6 @@ CREATE TABLE buses
     facility         JSONB
 );
 
-CREATE TABLE locations
-(
-    location_id SERIAL PRIMARY KEY,
-    city        VARCHAR(100) NOT NULL,
-    province    VARCHAR(100) NOT NULL,
-    UNIQUE (city, province)
-);
-
 CREATE TABLE tickets
 (
     ticket_id               SERIAL PRIMARY KEY,
@@ -83,7 +83,7 @@ CREATE TYPE reservation_status As ENUM ('RESERVED', 'NOT_RESERVED', 'TEMPORARY')
 CREATE TABLE reservations
 (
     reservation_id               SERIAL PRIMARY KEY,
-    username                     VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE NOT NULL,
+    username                     VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE ,
     ticket_id                    INTEGER REFERENCES tickets (ticket_id) ON UPDATE CASCADE  NOT NULL,
     reservation_status           reservation_status                                        NOT NULL DEFAULT 'NOT_RESERVED',
     date_and_time_of_reservation TIMESTAMP,
@@ -127,8 +127,8 @@ CREATE TABLE reservations_history
     reservation_id             INTEGER REFERENCES reservations (reservation_id) ON UPDATE CASCADE NOT NULL,
     date_and_time              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     operation_type             operation_type                                                     NOT NULL,
-    cancel_by                  VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE CHECK (operation_type = 'CANCEL' OR cancel_by IS NULL),
-    reservation_history_status reservation_history_status                                         NOT NULL
+    cancel_by                  VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE CHECK (operation_type = 'CANCEL' OR cancel_by IS NULL) DEFAULT NULL,
+    reservation_history_status reservation_history_status
 );
 
 CREATE TYPE request_subject AS ENUM ('CANCEL', 'CHANGE_DATE');
@@ -145,4 +145,21 @@ CREATE TABLE requests
     check_by        VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE,
     date_and_time   TIMESTAMP                                                                   DEFAULT CURRENT_TIMESTAMP
 );
+
+
+CREATE INDEX idx_tickets_vehicle_id ON tickets (vehicle_id);
+CREATE INDEX idx_reservations_ticket_id ON reservations (ticket_id);
+CREATE INDEX idx_payments_reservation_id ON payments (reservation_id);
+CREATE INDEX idx_reservations_username ON reservations (username);
+CREATE INDEX idx_payments_payment_status ON payments (payment_status);
+CREATE INDEX idx_payments_date_and_time ON payments (date_and_time_of_payment);
+CREATE INDEX idx_tickets_origin_location_id ON tickets (origin_location_id);
+CREATE INDEX idx_locations_province ON locations (province);
+CREATE INDEX idx_users_date_of_sign_in ON users (date_of_sign_in);
+CREATE INDEX idx_users_user_role ON users (user_role);
+CREATE INDEX idx_reservations_history_cancel_by ON reservations_history (cancel_by);
+CREATE INDEX idx_reservations_history_operation_type ON reservations_history (operation_type);
+CREATE INDEX idx_users_name ON users (name);
+CREATE INDEX idx_flights_airline_name ON flights (airline_name);
+CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
 
