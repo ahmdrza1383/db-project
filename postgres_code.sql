@@ -83,11 +83,11 @@ CREATE TYPE reservation_status As ENUM ('RESERVED', 'NOT_RESERVED', 'TEMPORARY')
 CREATE TABLE reservations
 (
     reservation_id               SERIAL PRIMARY KEY,
-    username                     VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE ,
-    ticket_id                    INTEGER REFERENCES tickets (ticket_id) ON UPDATE CASCADE  NOT NULL,
-    reservation_status           reservation_status                                        NOT NULL DEFAULT 'NOT_RESERVED',
+    username                     VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE,
+    ticket_id                    INTEGER REFERENCES tickets (ticket_id) ON UPDATE CASCADE NOT NULL,
+    reservation_status           reservation_status                                       NOT NULL DEFAULT 'NOT_RESERVED',
     date_and_time_of_reservation TIMESTAMP,
-    reservation_seat             INTEGER CHECK (reservation_seat > 0)                      NOT NULL
+    reservation_seat             INTEGER CHECK (reservation_seat > 0)                     NOT NULL
 );
 
 CREATE TYPE payment_status As ENUM ('PAID', 'NOT_PAID', 'WAITING');
@@ -125,7 +125,7 @@ CREATE TABLE reservations_history
     reservation_history_id     SERIAL PRIMARY KEY,
     username                   VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE          NOT NULL,
     reservation_id             INTEGER REFERENCES reservations (reservation_id) ON UPDATE CASCADE NOT NULL,
-    date_and_time              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    date_and_time              TIMESTAMP                                                                                                        DEFAULT CURRENT_TIMESTAMP,
     operation_type             operation_type                                                     NOT NULL,
     cancel_by                  VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE CHECK (operation_type = 'CANCEL' OR cancel_by IS NULL) DEFAULT NULL,
     reservation_history_status reservation_history_status
@@ -161,9 +161,6 @@ CREATE INDEX idx_reservations_history_cancel_by ON reservations_history (cancel_
 CREATE INDEX idx_reservations_history_operation_type ON reservations_history (operation_type);
 CREATE INDEX idx_users_name ON users (name);
 CREATE INDEX idx_flights_airline_name ON flights (airline_name);
-<<<<<<< HEAD
 CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
 
-=======
-CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
->>>>>>> febd8d92c5ad0ca0393dcb33c61c40e4c516cfae
+

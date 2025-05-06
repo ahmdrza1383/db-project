@@ -1,60 +1,78 @@
 --1 without join
-select n.name from users n
-    where n.username in
-        ((select u.username from users u where u.user_role = 'USER') except  (select rh.username from reservations_history rh where rh.operation_type = 'BUY' and rh.reservation_history_status = 'SUCCESSFUL'));
+select n.name
+from users n
+where n.username in
+      ((select u.username from users u where u.user_role = 'USER')
+       except
+       (select rh.username
+        from reservations_history rh
+        where rh.operation_type = 'BUY'
+          and rh.reservation_history_status = 'SUCCESSFUL'));
 
 
 --1 with join
 select u.name
-	from users u left join reservations_history rh
-		on u.username  = rh.username
-			where rh.reservation_history_id is null
-			and u.user_role = 'USER';
+from users u
+         left join reservations_history rh
+                   on u.username = rh.username
+where rh.reservation_history_id is null
+  and u.user_role = 'USER';
 
 --2 without join
 select u.name
-    from users u
-        where u.user_role = 'USER' and  u.username in
-            (select distinct(rh.username) from reservations_history rh
-                where rh.operation_type = 'BUY' and rh.reservation_history_status = 'SUCCESSFUL')
+from users u
+where u.user_role = 'USER'
+  and u.username in
+      (select distinct(rh.username)
+       from reservations_history rh
+       where rh.operation_type = 'BUY'
+         and rh.reservation_history_status = 'SUCCESSFUL')
 
 --2 with join
 select u.name
-	from users u inner join 
-	(select distinct(rh1.username) from reservations_history rh1 where rh1.operation_type = 'BUY') rh
-		on u.username = rh.username;
+from users u
+         inner join
+     (select distinct(rh1.username) from reservations_history rh1 where rh1.operation_type = 'BUY') rh
+     on u.username = rh.username;
 
 
 --3
-select p.username, extract(month from p.date_and_time_of_payment) as mounth, sum(p.amount_paid)
-    from payments p
-    	group by extract(month from p.date_and_time_of_payment), p.username;
+select q.username, coalesce(q.month, 0) as month, sum(coalesce(q.amount_paid, 0)) as total_paid
+from (select k.username , extract(month from k.date_and_time_of_payment) as month, k.amount_paid
+from (select u.username, p.date_and_time_of_payment, p.amount_paid
+from (select u1.username from users u1 where u1.user_role = 'USER')u
+left join (select * from payments p1 where p1.payment_status = 'PAID')p on u.username = p.username)k)q
+group by q.username, q.month
 
 --4 based on the last person who purchased the ticket.
-select k.username from
-	(select r.username, count(*) as n
-		from reservations r inner join tickets t
-			on t.ticket_id = r.ticket_id
-				where r.reservation_status = 'RESERVED'
-					group by r.username, t.origin_location_id) k
-						group by k.username
-							having sum(k.n) = count(k.n);
+select k.username
+from (select r.username, count(*) as n
+      from reservations r
+               inner join tickets t
+                          on t.ticket_id = r.ticket_id
+      where r.reservation_status = 'RESERVED'
+      group by r.username, t.origin_location_id) k
+group by k.username
+having sum(k.n) = count(k.n);
 
 --4 Based on all purchases.
-select p.username from
-    (select k.username, count(*) as n from
-        ((select rh.username, r.ticket_id from
-            reservations_history rh inner join reservations r  on r.reservation_id = rh.reservation_id where rh.operation_type = 'BUY')k
-                inner join tickets t on k.ticket_id = t.ticket_id)
-                    group by t.origin_location_id, k.username) p
-                        group by p.username having sum(p.n) = count(p.n);
+select p.username
+from (select k.username, count(*) as n
+      from ((select rh.username, r.ticket_id
+             from reservations_history rh
+                      inner join reservations r on r.reservation_id = rh.reservation_id
+             where rh.operation_type = 'BUY') k
+          inner join tickets t on k.ticket_id = t.ticket_id)
+      group by t.origin_location_id, k.username) p
+group by p.username
+having sum(p.n) = count(p.n);
 
 --5
 select u.name
-	from users u  inner join payments p
-		on u.username  = p.username
-			order by p.date_and_time_of_payment desc
-				limit 1;
+from users u
+         inner join payments p
+                    on u.username = p.username
+order by p.date_and_time_of_payment desc limit 1;
 
 
 --6
@@ -113,3 +131,144 @@ where u.username = (select username
                     from users u2
                     order by u2.date_of_sign_in limit 1
     );
+
+--11
+select u.name
+  from users u
+    where u.user_role = 'ADMIN';
+
+--16
+select t.ticket_id, count(r.reservation_id) as res_count
+from tickets t
+         join reservations r on t.ticket_id = r.ticket_id
+where r.reservation_status = 'RESERVED'
+group by t.ticket_id
+order by res_count desc limit 1
+offset 1;
+
+select t.ticket_id, (t.total_capacity - t.remaining_capacity) * 100 / t.total_capacity as buy_percentage
+from tickets t
+order by buy_percentage desc
+offset 1 limit 1;
+
+--17
+-- find admin with accepted cancelation
+select check_by, count(*)
+from requests r
+where r.request_subject = 'CANCEL'
+  and r.is_checked = true
+  and r.is_accepted = true
+group by r.check_by
+order by count(*);
+
+--all admin with cancel percent
+SELECT u.username                                                  AS admin_username,
+       COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*)
+                                  FROM requests
+                                  WHERE check_by = u.username), 0) AS cancel_percentage
+FROM users u
+         JOIN
+     requests r ON r.check_by = u.username
+WHERE u.user_role = 'ADMIN'
+  AND r.request_subject = 'CANCEL'
+  AND r.is_accepted = true
+GROUP BY u.username
+order by;
+
+SELECT u.username                                                  AS admin_username,
+       COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*)
+                                  FROM requests
+                                  WHERE check_by = u.username), 0) AS cancel_percentage
+FROM users u
+         JOIN
+     requests r ON r.check_by = u.username
+WHERE u.user_role = 'ADMIN'
+  AND r.request_subject = 'CANCEL'
+  AND r.is_accepted = true
+GROUP BY u.username
+ORDER BY cancel_percentage desc LIMIT 1;
+
+--18
+select name, count(*)
+from users u
+         join reservations_history rh on rh.username = u.username
+where rh.operation_type = 'CANCEL'
+  and rh.reservation_history_status = 'CANCELED'
+group by u.username
+order by count(*) desc limit 1;
+
+update users
+set name = 'redington'
+where username = (select u.username
+                  from users u
+                           join reservations_history rh on rh.username = u.username
+                  where rh.operation_type = 'CANCEL'
+                    and rh.reservation_history_status = 'CANCELED'
+                  group by u.username
+                  order by count(*) desc limit 1
+    );
+
+--19
+SELECT u.username
+from users u
+         JOIN reservations_history rh ON rh.username = u.username
+WHERE rh.operation_type = 'CANCEL'
+  AND rh.reservation_history_status = 'CANCELED'
+  and u.name = 'ridingtone'
+
+delete
+from reservation
+where username = (SELECT u.username
+                  from users u
+                           JOIN reservations_history rh ON rh.username = u.username
+                  WHERE rh.operation_type = 'CANCEL'
+                    AND rh.reservation_history_status = 'CANCELED'
+                    and u.name = 'ridingtone' limit 1
+    );
+
+--20
+update reservations
+set reservation_status           = 'NOT_RESERVED',
+    username                     = null,
+    date_and_time_of_reservation = null
+where reservation_id in (select r.reservation_id
+                         from reservations r
+                         where r.reservation_status = 'TEMPORARY'
+                           and current_timestamp - r.date_and_time_of_reservation > interval '10 minutes'
+    );
+
+--21
+select t.ticket_id from tickets t
+join flights f on t.vehicle_id = f.vehicle_id
+where f.airline_name = 'Mahan Air';
+
+update tickets
+set price = price * 90 / 100
+where ticket_id  in (
+select t.ticket_id from tickets t
+join flights f on t.vehicle_id = f.vehicle_id
+where f.airline_name = 'Mahan Air'
+);
+
+--22
+select t.ticket_id, count(*)
+from reports r
+         join reservations r2 on r.reservation_id = r2.reservation_id
+         join tickets t on t.ticket_id = r2.ticket_id
+group by t.ticket_id
+order by count(*) desc limit 1;
+
+
+select r.report_type, count(*)
+from reports r
+         join reservations r4 on r4.reservation_id = r.reservation_id
+         join tickets t2 on t2.ticket_id = r4.ticket_id
+where t2.ticket_id =
+      (select t.ticket_id
+       from reports r3
+                join reservations r2 on r3.reservation_id = r2.reservation_id
+                join tickets t on t.ticket_id = r2.ticket_id
+       group by t.ticket_id
+       order by count(*) desc limit 1
+    )
+group by r.report_type;

@@ -789,3 +789,29 @@ INSERT INTO reservations_history (username, reservation_id, date_and_time, opera
 ('narges2222', 105,  '2025-04-07 20:10:00', 'BUY', 'SUCCESSFUL'),
 ('elnaz2828', 106,  '2025-04-09 02:05:00', 'BUY', 'SUCCESSFUL'),
 ('golnaz3434', 107,  '2025-04-09 23:01:00', 'BUY', 'SUCCESSFUL');
+
+-- PAID AND CANCEL IT
+insert into INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method) VALUES
+('parvaneh4040', 108, 3000000, 'PAID', '2024-04-06 12:00:00', 'WALLET');
+
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status) VALUES
+('parvaneh4040', 108, '2024-04-06 12:00:00', 'BUY', 'SUCCESSFUL'),
+('parvaneh4040', 108, '2024-04-06 12:10:00', 'CANCEL', 'CANCELED');
+
+INSERT INTO reports (username, reservation_id, report_type, report_text) VALUES
+('golnaz3434', 22, 'OTHER', 'test');
+
+
+-- NEW DATA
+
+insert into requests (username, reservation_id, request_subject, request_text, is_checked, is_accepted, check_by) values
+('mehdi2121', 101, 'CANCEL', 'test', TRUE, FALSE, 'admin1'),
+('mehdi2121', 102, 'CANCEL', 'test', TRUE, FALSE, 'admin1'),
+('mehdi2121', 110, 'CANCEL', 'test', TRUE, TRUE, 'admin2'),
+('narges2222', 105, 'CANCEL', 'test', TRUE, FALSE, 'admin2'),
+('narges2222', 109, 'CANCEL', 'test', TRUE,  TRUE, 'admin1');
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status) VALUES
+('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'CANCELED'),
+('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'CANCELED');
+
+
