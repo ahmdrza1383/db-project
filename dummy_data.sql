@@ -815,3 +815,7 @@ INSERT INTO reservations_history (username, reservation_id, date_and_time, opera
 ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'CANCELED');
 
 
+-- افزودن 30 گزارش
+INSERT INTO reports (username, reservation_id, report_type, report_text) VALUES
+-- گزارش‌های نوع PAYMENT
+('ali123', 1, 'PAYMENT', 'IUFHJ');
