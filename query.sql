@@ -61,7 +61,8 @@ from (select k.username, count(*) as n
       from ((select rh.username, r.ticket_id
              from reservations_history rh
                       inner join reservations r on r.reservation_id = rh.reservation_id
-             where rh.operation_type = 'BUY') k
+             where rh.operation_type = 'BUY'
+               AND rh.reservation_history_status = 'SUCCESSFUL') k
           inner join tickets t on k.ticket_id = t.ticket_id)
       group by t.origin_location_id, k.username) p
 group by p.username
@@ -73,7 +74,6 @@ from users u
          inner join payments p
                     on u.username = p.username
 order by p.date_and_time_of_payment desc limit 1;
-
 
 --6
 select phone_number
@@ -106,25 +106,29 @@ where r.reservation_status = 'RESERVED'
 group by v.vehicle_type;
 
 --8
-select name, count(r.reservation_id) as count_of_reservation
+select name, count(rh.reservation_id) as count_of_reservation
 from users u
-         join reservations r on r.username = u.username
-where DATE (r.date_and_time_of_reservation) >= CURRENT_DATE - interval '7 days'
+         join reservations_history rh on rh.username = u.username
+where DATE (rh.date_and_time) >= CURRENT_DATE - interval '7 days'
 group by u.username
-order by count (r.reservation_id) desc limit 3;
+order by count (rh.reservation_id) desc limit 3;
 
 --9
 select l.city, count(r.reservation_id)
-from reservations r
+from reservations_history rh
+         join reservations r on r.reservation_id = rh.reservation_id
          join tickets t on t.ticket_id = r.ticket_id
          join locations l on l.location_id = t.origin_location_id
 where l.province = 'Tehran'
+  and rh.reservation_history_status = 'SUCCESSFUL'
+  and rh.operation_type = 'BUY'
 group by l.city;
 
 --10
 select u.username, l.city
 from users u
          join reservations r on r.username = u.username
+         join reservations_history rh on r.reservation_id = rh.reservation_id
          join tickets t on t.ticket_id = r.ticket_id
          join locations l on l.location_id = t.origin_location_id
 where u.username = (select username
@@ -150,37 +154,33 @@ from users u
 where k.n > 1;
 
 --13
-select u.username , count(*), v.vehicle_type
+select distinct(u.username)
 from users u
-join reservations_history rh on rh.username = u.username
-join reservations r on r.reservation_id = rh.reservation_id
-join tickets t on t.ticket_id = r.ticket_id
-join vehicles v on v.vehicle_id = t.vehicle_id
-where u.user_role = 'USER' and
-	rh.operation_type = 'BUY' and
-	rh.reservation_history_status  = 'SUCCESSFUL'
-group by u.username , v.vehicle_type
+         join reservations_history rh on rh.username = u.username
+         join reservations r on r.reservation_id = rh.reservation_id
+         join tickets t on t.ticket_id = r.ticket_id
+         join vehicles v on v.vehicle_id = t.vehicle_id
+where u.user_role = 'USER'
+  and rh.operation_type = 'BUY'
+  and rh.reservation_history_status = 'SUCCESSFUL'
+group by u.username, v.vehicle_type
 having count(*) < 3
 
 
 --14
-select d.username
-from (select c.username, count(*) as all_buy
-      from (select *
-            from (select a.username, a.vehicle_type, count(*) as n
-                  from (select q.username, v.vehicle_type
-                        from (select g.username, t.vehicle_id
-                              from (select k.username, r.ticket_id
-                                    from (select rh1.username, rh1.reservation_id
-                                          from reservations_history rh1
-                                          where rh1.operation_type = 'BUY'
-                                            and rh1.reservation_history_status = 'SUCCESSFUL') k
-                                             inner join reservations r on r.reservation_id = k.reservation_id) g
-                                       inner join tickets t on t.ticket_id = g.ticket_id) q
-                                 inner join vehicles v on v.vehicle_id = q.vehicle_id) a
-                  group by a.username, a.vehicle_type) b) c
-      group by c.username) d
-where d.all_buy >= 3
+SELECT rh.username
+FROM reservations_history rh
+         INNER JOIN reservations r
+                    ON r.reservation_id = rh.reservation_id
+         INNER JOIN tickets t
+                    ON t.ticket_id = r.ticket_id
+         INNER JOIN vehicles v
+                    ON v.vehicle_id = t.vehicle_id
+WHERE rh.operation_type = 'BUY'
+  AND rh.reservation_history_status = 'SUCCESSFUL'
+GROUP BY rh.username
+HAVING COUNT(DISTINCT v.vehicle_type) >= 3
+
 
 --15
 SELECT t.ticket_id,
@@ -227,23 +227,11 @@ group by r.check_by
 order by count(*);
 
 --all admin with cancel percent
-SELECT u.username                                                  AS admin_username,
+SELECT u.username                                                          AS admin_username,
        COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*)
-                                  FROM requests
-                                  WHERE check_by = u.username), 0) AS cancel_percentage
-FROM users u
-         JOIN
-     requests r ON r.check_by = u.username
-WHERE u.user_role = 'ADMIN'
-  AND r.request_subject = 'CANCEL'
-  AND r.is_accepted = true
-GROUP BY u.username
-order by;
-
-SELECT u.username                                                  AS admin_username,
-       COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*)
-                                  FROM requests
-                                  WHERE check_by = u.username), 0) AS cancel_percentage
+                                  FROM requests r2
+                                  WHERE r2.check_by = u.username
+                                    AND r2.request_subject = 'CANCEL'), 0) AS cancel_percentage
 FROM users u
          JOIN
      requests r ON r.check_by = u.username
