@@ -6,6 +6,7 @@ from .serializers import CustomUserSerializer
 from .auth_backend import CustomUser
 from django.shortcuts import render
 
+
 class CreateUserView(APIView):
     # renderer_classes = [TemplateHTMLRenderer]
 
@@ -21,8 +22,9 @@ class CreateUserView(APIView):
             return Response({"error": "Failed to create user"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class UserView(APIView):
-    def get(self,request,username):
+    def get(self, request, username):
         user = CustomUser.get_user(username)
         if user:
             serializer = CustomUserSerializer(user)

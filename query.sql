@@ -291,17 +291,23 @@ where reservation_id in (select r.reservation_id
     );
 
 --21
-select t.ticket_id
-from tickets t
-         join flights f on t.vehicle_id = f.vehicle_id
-where f.airline_name = 'Mahan Air';
+SELECT DISTINCT t.ticket_id
+FROM tickets t
+         JOIN flights f ON t.vehicle_id = f.vehicle_id
+         JOIN reservations r ON t.ticket_id = r.ticket_id
+WHERE f.airline_name = 'Mahan Air'
+  AND r.reservation_status = 'RESERVED'
+  AND DATE (r.date_and_time_of_reservation) = CURRENT_DATE - INTERVAL '1 day';
 
 update tickets
 set price = price * 90 / 100
-where ticket_id in (select t.ticket_id
-                    from tickets t
-                             join flights f on t.vehicle_id = f.vehicle_id
-                    where f.airline_name = 'Mahan Air');
+where ticket_id in (SELECT DISTINCT t.ticket_id
+                    FROM tickets t
+                             JOIN flights f ON t.vehicle_id = f.vehicle_id
+                             JOIN reservations r ON t.ticket_id = r.ticket_id
+                    WHERE f.airline_name = 'Mahan Air'
+                      AND r.reservation_status = 'RESERVED'
+                      AND DATE (r.date_and_time_of_reservation) = CURRENT_DATE - INTERVAL '1 day');
 
 --22
 select t.ticket_id, count(*)
