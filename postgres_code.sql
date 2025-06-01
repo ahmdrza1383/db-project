@@ -17,11 +17,12 @@ CREATE TABLE users
     name                  VARCHAR(100),
     email                 VARCHAR(100)                                                 NOT NULL UNIQUE,
     phone_number          VARCHAR(15) UNIQUE,
-    city                  INTEGER REFERENCES locations (location_id) ON UPDATE CASCADE NOT NULL,
+    city                  INTEGER REFERENCES locations (location_id) ON UPDATE CASCADE,
     date_of_sign_in       TIMESTAMP                                                             DEFAULT CURRENT_TIMESTAMP,
     profile_picture       BYTEA,
     authentication_method authentication_method                                        NOT NULL DEFAULT 'EMAIL',
-    profile_status        BOOLEAN                                                               DEFAULT TRUE
+    profile_status        BOOLEAN                                                               DEFAULT TRUE,
+    date_of_birth DATE
 );
 
 CREATE TYPE vehicle_type As ENUM ('BUS', 'TRAIN', 'FLIGHT');

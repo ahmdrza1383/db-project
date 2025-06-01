@@ -2,8 +2,10 @@ import psycopg2
 from django.contrib.auth.backends import BaseBackend
 import hashlib
 
+
 class CustomUser:
-    def __init__(self, username, password,name, email, phone_number, city, date_of_sign_in=None, profile_picture=None,user_role='USER', authentication_method='EMAIL'):
+    def __init__(self, username, password, name, email, phone_number, city, date_of_sign_in=None, profile_picture=None,
+                 user_role='USER', authentication_method='EMAIL'):
         self.username = username
         self.password = password
         self.name = name
@@ -63,16 +65,15 @@ class CustomUser:
             print("Database Error:", e)
             return None
 
-
     @classmethod
     def get_user(self, username):
         try:
             with psycopg2.connect(
-                dbname="mydatabase",
-                user="postgres",
-                password="postgres",
-                host="db",
-                port="5432"
+                    dbname="mydatabase",
+                    user="postgres",
+                    password="postgres",
+                    host="db",
+                    port="5432"
             ) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM users WHERE username = %s", (username,))
@@ -83,6 +84,7 @@ class CustomUser:
 
         except Exception as e:
             print("Database Error:", e)
+
 
 def create_user(user_data):
     username = user_data[0]
@@ -100,19 +102,21 @@ def create_user(user_data):
         authentication_method
     )
 
+
 class CustomPostgresBackend(BaseBackend):
     def authenticate(self, request, username=None, password=None):
         try:
             hashed_password = hashlib.sha256(password.encode()).hexdigest()
             with psycopg2.connect(
-                dbname="mydatabase",
-                user="postgres",
-                password="postgres",
-                host="db",
-                port="5432"
+                    dbname="mydatabase",
+                    user="postgres",
+                    password="postgres",
+                    host="db",
+                    port="5432"
             ) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM users WHERE username = %s AND password = %s", (username, hashed_password))
+                    cur.execute("SELECT * FROM users WHERE username = %s AND password = %s",
+                                (username, hashed_password))
                     user_data = cur.fetchone()
 
             if user_data:
@@ -126,11 +130,11 @@ class CustomPostgresBackend(BaseBackend):
     def get_user(self, username):
         try:
             with psycopg2.connect(
-                dbname="mydatabase",
-                user="postgres",
-                password="postgres",
-                host="db",
-                port="5432"
+                    dbname="mydatabase",
+                    user="postgres",
+                    password="postgres",
+                    host="db",
+                    port="5432"
             ) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT * FROM users WHERE username = %s", (username,))

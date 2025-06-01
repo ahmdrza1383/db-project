@@ -27,6 +27,7 @@ from . import settings
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('pages.urls')),
+    path('api-test/', include('api.urls')),
     path('users/', include('users.urls')),
     path('api-auth/', include('rest_framework.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='api-schema'),

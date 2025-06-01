@@ -1,7 +1,6 @@
 version: '3.9'
 
 services:
-  # Django Web Application
   web:
     build: .
     command: python manage.py runserver 0.0.0.0:8000
@@ -11,12 +10,14 @@ services:
       - "8000:8000"
     depends_on:
       - db
+      - redis
     environment:
-      - DJANGO_SETTINGS_MODULE=config.settings  # Define Django settings module
-      - DEBUG=True  # Set to False in production
-      - DATABASE_URL=postgres://postgres@db:5432/mydatabase  # Example DB connection
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - DEBUG=True
+      - DATABASE_URL=postgres://postgres@db:5432/mydatabase
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
-  # PostgreSQL Database
   db:
     image: postgres:17-alpine
     restart: always
@@ -31,5 +32,15 @@ services:
       - "5433:5432"
     command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
 
+  redis:
+    image: redis:7-alpine
+    container_name: myredis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   postgres_data:
+  redis_data:

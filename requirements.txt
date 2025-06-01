@@ -1,5 +1,6 @@
 asgiref==3.8.1
 attrs==25.3.0
+bcrypt==4.3.0
 Django==5.1.7
 django-debug-toolbar==5.2.0
 djangorestframework==3.15.2
@@ -8,7 +9,9 @@ inflection==0.5.1
 jsonschema==4.23.0
 jsonschema-specifications==2024.10.1
 psycopg2==2.9.10
+PyJWT==2.10.1
 PyYAML==6.0.2
+redis==6.2.0
 referencing==0.36.2
 rpds-py==0.24.0
 sqlparse==0.5.3
