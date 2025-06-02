@@ -449,36 +449,72 @@ def update_user_profile_view(request):
     """
     Updates profile information for the authenticated user.
 
-    Allows updating: username, password, name, email, phone number,
-    date of birth, city_id, and authentication method.
-    For optional fields like name, phone_number, date_of_birth, and city_id,
-    sending a 'null' value in the request payload will result in an error;
-    to keep these fields unchanged, omit them from the request.
-    To clear an optional field (if allowed by business logic and DB schema),
-    a different mechanism or API endpoint might be required. This API
-    prevents explicit nullification of these optional fields via 'null' input.
+    This API endpoint allows an authenticated user to update their profile details.
+    All fields in the request body are optional. To keep a field unchanged,
+    simply omit it from the request payload.
+    For optional fields like 'name', 'phone_number', 'date_of_birth', and 'city_id',
+    sending a 'null' value in the request payload will result in a 400 error;
+    these fields cannot be explicitly set to null via this API if you mean to clear them.
+    If these fields are already null in the database, sending 'null' might be accepted
+    (effectively no change) or still rejected based on the strict interpretation below.
+    The current stricter interpretation is to reject explicit 'null' for these.
+
+    Sensitive fields like username, password, and email can be changed by providing
+    'new_username', 'new_password', and 'new_email' respectively. Changing
+    username or password will result in new JWTs being issued.
+
+    After a successful database update, the user's profile cache in Redis
+    will be updated or created. If the username changes, the cache for the
+    old username will be deleted.
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
 
-    Request Body (JSON - all fields are optional, but sending 'null' for
-    name, phone_number, date_of_birth, city_id will cause an error):
+    Request Body (JSON - all fields are optional):
     {
-        "name": "New Name",
-        "new_username": "new_unique_username",
-        "new_password": "NewSecurePassword123!",
-        "new_email": "new_unique_user@example.com",
-        "phone_number": "09xxxxxxxxx",
-        "date_of_birth": "YYYY-MM-DD",
-        "city_id": 2,
-        "new_authentication_method": "PHONE_NUMBER"
+        "name": "New Full Name",
+        "new_username": "new_unique_username123",
+        "new_password": "aVeryStrongPassword!@#",
+        "new_email": "new.email.unique@example.com",
+        "phone_number": "09123456780",
+        "date_of_birth": "1990-01-01",
+        "city_id": 10, // Integer ID referencing locations table
+        "new_authentication_method": "PHONE_NUMBER" // 'EMAIL' or 'PHONE_NUMBER'
     }
-    // ... Successful and Error Responses ...
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "message": "Profile updated successfully.",
+        "access_token": "<new_jwt_access_token_if_username_or_password_changed>",
+        "refresh_token": "<new_jwt_refresh_token_if_username_or_password_changed>",
+        "user_info": {
+            "username": "current_or_new_username",
+            "name": "New Full Name",
+            "email": "current_or_new_email@example.com",
+            "phone_number": "09123456780",
+            "date_of_birth": "1990-01-01",
+            "city_id": 10, // or null if it was set to null and DB allows
+            "authentication_method": "PHONE_NUMBER",
+            "role": "USER" // Or actual role
+        }
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid JSON, missing required fields for sensitive operations,
+                       invalid data format (e.g., email, phone, date),
+                       explicitly sending 'null' for 'name', 'phone_number', 'date_of_birth', 'city_id'.
+    - 401 Unauthorized: Token missing or invalid.
+    - 404 Not Found: User not found (should not happen if token is valid).
+    - 409 Conflict: Username, email, or phone number already exists.
+    - 500 Internal Server Error: Database or other unexpected server errors.
+    - 503 Service Unavailable: Redis service unavailable (if it's critical for an operation).
     """
     try:
         current_username_from_token = request.user_payload.get('sub')
         if not current_username_from_token:
-            return JsonResponse({'status': 'error', 'message': 'Invalid token: Username not found.'}, status=401)
+            return JsonResponse({'status': 'error', 'message': 'Invalid token: Username not found in token payload.'},
+                                status=401)
 
         try:
             data_payload = json.loads(request.body)
@@ -486,71 +522,65 @@ def update_user_profile_view(request):
             return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
 
         if not data_payload:
-            return JsonResponse({'status': 'error', 'message': 'No fields provided for update.'}, status=400)
+            return JsonResponse({'status': 'error',
+                                 'message': 'No fields provided for update. Please provide at least one field to update.'},
+                                status=400)
 
         fields_to_update_in_db = {}
-        params_for_sql_update = []
         requires_new_jwt_token = False
 
-        if 'name' in data_payload:
-            new_name = data_payload['name']
-            if new_name is None:
-                return JsonResponse({'status': 'error',
-                                     'message': 'Name cannot be set to null. Omit the field to keep current value or provide a new name.'},
-                                    status=400)
-            if not isinstance(new_name, str) or not new_name.strip():
-                return JsonResponse({'status': 'error', 'message': 'Name cannot be empty.'}, status=400)
-            fields_to_update_in_db['name'] = new_name.strip()
+        optional_fields_no_explicit_null = {
+            'name': 'Name',
+            'phone_number': 'Phone number',
+            'date_of_birth': 'Date of birth',
+            'city_id': 'City ID'
+        }
 
-        # Phone Number
-        if 'phone_number' in data_payload:
-            new_phone = data_payload['phone_number']
-            if new_phone is None:
-                return JsonResponse({'status': 'error',
-                                     'message': 'Phone number cannot be set to null. Omit the field to keep current value or provide a new number.'},
-                                    status=400)
-
-            phone_to_validate = str(new_phone).strip()
-            if not phone_to_validate:
-                return JsonResponse({'status': 'error', 'message': 'Phone number cannot be empty if provided.'},
-                                    status=400)
-
-            phone_pattern = r"^09\d{9}$"
-            if not re.match(phone_pattern, phone_to_validate):
-                return JsonResponse({'status': 'error', 'message': 'Invalid phone number format (09XXXXXXXXX).'},
-                                    status=400)
-            fields_to_update_in_db['phone_number'] = phone_to_validate
-
-        if 'date_of_birth' in data_payload:
-            dob_str = data_payload['date_of_birth']
-            if dob_str is None:
-                return JsonResponse({'status': 'error',
-                                     'message': 'Date of birth cannot be set to null. Omit the field to keep current value or provide a new date.'},
-                                    status=400)
-
-            if not isinstance(dob_str, str) or not dob_str.strip():
-                return JsonResponse({'status': 'error', 'message': 'Date of birth cannot be empty if provided.'},
-                                    status=400)
-            try:
-                dob_obj = datetime.strptime(dob_str, '%Y-%m-%d').date()
-                if dob_obj > date.today():
-                    return JsonResponse({'status': 'error', 'message': 'Date of birth cannot be in the future.'},
+        for field_key, field_name_display in optional_fields_no_explicit_null.items():
+            if field_key in data_payload:
+                value = data_payload[field_key]
+                if value is None:
+                    return JsonResponse({'status': 'error',
+                                         'message': f'{field_name_display} cannot be set to null. Omit the field to keep the current value or provide a new value.'},
                                         status=400)
-                fields_to_update_in_db['date_of_birth'] = dob_obj
-            except ValueError:
-                return JsonResponse(
-                    {'status': 'error', 'message': 'Invalid date format for date_of_birth (YYYY-MM-DD).'}, status=400)
 
-        if 'city_id' in data_payload:
-            city_id_input = data_payload['city_id']
-            if city_id_input is None:
-                return JsonResponse({'status': 'error',
-                                     'message': 'City ID cannot be set to null. Omit the field to keep current value or provide a new city ID.'},
-                                    status=400)
+                if field_key == 'name':
+                    if not isinstance(value, str) or not value.strip():
+                        return JsonResponse({'status': 'error', 'message': 'Name cannot be empty if provided.'},
+                                            status=400)
+                    fields_to_update_in_db['name'] = value.strip()
 
-            if not isinstance(city_id_input, int):
-                return JsonResponse({'status': 'error', 'message': 'city_id must be an integer.'}, status=400)
-            fields_to_update_in_db['city'] = city_id_input
+                elif field_key == 'phone_number':
+                    phone_to_validate = str(value).strip()
+                    if not phone_to_validate:
+                        return JsonResponse({'status': 'error', 'message': 'Phone number cannot be empty if provided.'},
+                                            status=400)
+                    phone_pattern = r"^09\d{9}$"
+                    if not re.match(phone_pattern, phone_to_validate):
+                        return JsonResponse(
+                            {'status': 'error', 'message': 'Invalid phone number format (09XXXXXXXXX).'}, status=400)
+                    fields_to_update_in_db['phone_number'] = phone_to_validate
+
+                elif field_key == 'date_of_birth':
+                    dob_str = str(value).strip()
+                    if not dob_str:
+                        return JsonResponse(
+                            {'status': 'error', 'message': 'Date of birth cannot be empty if provided.'}, status=400)
+                    try:
+                        dob_obj = datetime.strptime(dob_str, '%Y-%m-%d').date()
+                        if dob_obj > date.today():
+                            return JsonResponse(
+                                {'status': 'error', 'message': 'Date of birth cannot be in the future.'}, status=400)
+                        fields_to_update_in_db['date_of_birth'] = dob_obj
+                    except ValueError:
+                        return JsonResponse(
+                            {'status': 'error', 'message': 'Invalid date format for date_of_birth (YYYY-MM-DD).'},
+                            status=400)
+
+                elif field_key == 'city_id':
+                    if not isinstance(value, int):
+                        return JsonResponse({'status': 'error', 'message': 'city_id must be an integer.'}, status=400)
+                    fields_to_update_in_db['city'] = value
 
         if 'new_username' in data_payload:
             new_username_val = data_payload.get('new_username')
@@ -593,12 +623,11 @@ def update_user_profile_view(request):
             fields_to_update_in_db['authentication_method'] = auth_method_val
 
         if not fields_to_update_in_db:
-            return JsonResponse(
-                {'status': 'error', 'message': 'No valid fields provided for update or no changes detected.'},
-                status=400)
+            return JsonResponse({'status': 'error', 'message': 'No valid fields or changes provided for update.'},
+                                status=400)
 
         set_clauses_list = [f"{db_column} = %s" for db_column in fields_to_update_in_db.keys()]
-        params_for_sql_update.extend(fields_to_update_in_db.values())
+        params_for_sql_update = list(fields_to_update_in_db.values())
         params_for_sql_update.append(current_username_from_token)
 
         update_sql_query = f"""
@@ -612,50 +641,58 @@ def update_user_profile_view(request):
         with connection.cursor() as cursor:
             cursor.execute(update_sql_query, params_for_sql_update)
             if cursor.rowcount == 0:
-                return JsonResponse({'status': 'error',
-                                     'message': 'User not found or no effective changes made (data might be the same).'},
+                return JsonResponse({'status': 'error', 'message': 'User not found or no effective changes applied.'},
                                     status=404)
 
             updated_row_tuple = cursor.fetchone()
             if updated_row_tuple:
-                db_columns = [col[0] for col in cursor.description]
-                updated_user_data_from_db = dict(zip(db_columns, updated_row_tuple))
+                db_columns_from_returning = [col[0] for col in cursor.description]
+                updated_user_data_from_db = dict(zip(db_columns_from_returning, updated_row_tuple))
             else:
-                raise DatabaseError("User update query executed but failed to return updated information.")
+                raise DatabaseError(
+                    "User update query executed (rowcount > 0) but failed to return updated information via RETURNING.")
+
+        user_info_for_response_and_cache = updated_user_data_from_db.copy()
+        if user_info_for_response_and_cache.get('date_of_birth') and isinstance(
+                user_info_for_response_and_cache['date_of_birth'], date):
+            user_info_for_response_and_cache['date_of_birth'] = user_info_for_response_and_cache[
+                'date_of_birth'].isoformat()
+        if 'city' in user_info_for_response_and_cache:
+            user_info_for_response_and_cache['city_id'] = user_info_for_response_and_cache.pop('city')
+
+        final_username_in_db = user_info_for_response_and_cache.get('username')
 
         if redis_client:
             try:
-                redis_cache_key_old_username = f"user_profile:{current_username_from_token}"
-                redis_client.delete(redis_cache_key_old_username)
-                print(f"User profile cache invalidated for old username: {current_username_from_token}")
+                if final_username_in_db != current_username_from_token:
+                    old_username_cache_key = f"user_profile:{current_username_from_token}"
+                    redis_client.delete(old_username_cache_key)
+                    print(f"User profile cache DELETED for old username: {current_username_from_token}")
 
-                new_username_in_db = updated_user_data_from_db.get('username')
-                if new_username_in_db != current_username_from_token:
-                    new_username_cache_key = f"user_profile:{new_username_in_db}"
-                    redis_client.delete(new_username_cache_key)
-                    print(f"Also invalidated cache for new username (if existed): {new_username_in_db}")
+                profile_cache_key = f"user_profile:{final_username_in_db}"
+                profile_cache_ttl_seconds = getattr(settings, 'USER_PROFILE_CACHE_TTL_SECONDS', 3600)
+                profile_data_json_str = json.dumps(user_info_for_response_and_cache)
+
+                redis_client.setex(
+                    profile_cache_key,
+                    profile_cache_ttl_seconds,
+                    profile_data_json_str
+                )
+                print(
+                    f"User profile UPDATED/ADDED in cache for username: {final_username_in_db} with TTL: {profile_cache_ttl_seconds}s")
             except redis.exceptions.RedisError as re_cache_err:
-                print(f"Redis error during cache invalidation: {re_cache_err}")
+                print(f"Redis error during profile cache operation: {re_cache_err}")
 
         response_json_data = {
             'status': 'success',
-            'message': 'Profile updated successfully.'
+            'message': 'Profile updated successfully.',
+            'user_info': user_info_for_response_and_cache
         }
 
-        if updated_user_data_from_db.get('date_of_birth') and isinstance(updated_user_data_from_db['date_of_birth'],
-                                                                         date):
-            updated_user_data_from_db['date_of_birth'] = updated_user_data_from_db['date_of_birth'].isoformat()
-
-        if 'city' in updated_user_data_from_db:
-            updated_user_data_from_db['city_id'] = updated_user_data_from_db.pop('city')
-
-        response_json_data['user_info'] = updated_user_data_from_db
-
-        final_username_for_jwt = updated_user_data_from_db.get('username', current_username_from_token)
         if requires_new_jwt_token:
             new_jwt_payload = {
-                "sub": final_username_for_jwt,
-                "role": updated_user_data_from_db.get('user_role', 'USER')
+                "sub": final_username_in_db,
+                "role": user_info_for_response_and_cache.get('user_role', 'USER')
             }
             response_json_data['access_token'] = create_access_token(data=new_jwt_payload)
             response_json_data['refresh_token'] = create_refresh_token(data=new_jwt_payload)
@@ -672,11 +709,12 @@ def update_user_profile_view(request):
         if "users_email_key" in err_str or ("duplicate key" in err_str and "email" in err_str):
             return JsonResponse({'status': 'error', 'message': 'This email address is already registered.'}, status=409)
         if "users_phone_number_key" in err_str or ("duplicate key" in err_str and "phone_number" in err_str):
-            if 'phone_number' in fields_to_update_in_db and fields_to_update_in_db['phone_number'] is not None:
+            if 'phone_number' in fields_to_update_in_db and fields_to_update_in_db.get('phone_number') is not None:
                 return JsonResponse({'status': 'error', 'message': 'This phone number is already registered.'},
                                     status=409)
-        if "violates foreign key constraint" in err_str and "city" in err_str:
-            if 'city' in fields_to_update_in_db and fields_to_update_in_db['city'] is not None:
+        if "violates foreign key constraint" in err_str and (
+                "users_city_fkey" in err_str or "users_city_id_fkey" in err_str):
+            if 'city' in fields_to_update_in_db and fields_to_update_in_db.get('city') is not None:
                 return JsonResponse({'status': 'error', 'message': 'Invalid city ID provided.'}, status=400)
         print(f"DB IntegrityError on profile update: {e}")
         return JsonResponse(
