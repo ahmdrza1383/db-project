@@ -11,6 +11,7 @@ import string
 import re
 
 from .auth_utils import *
+from .tasks import check_and_revert_reservation_task
 
 
 def generate_otp(length=6):
@@ -1268,15 +1269,10 @@ def get_ticket_details_view(request, ticket_id):
 @token_required
 def reserve_ticket_view(request):
     """
-    Temporarily reserves a specific seat for a given ticket for the authenticated user.
-
-    The user provides a ticket_id and a specific seat_number.
-    The API checks if this particular seat is available ('NOT_RESERVED' and no user).
-    If available, the seat's reservation status is updated to 'TEMPORARY',
-    linked to the current user, and the reservation time is recorded.
-    The ticket's remaining capacity is decremented by 1.
-    This reservation is valid for a limited duration (e.g., 10 minutes).
-    A background process is expected to handle expired temporary reservations.
+    Temporarily reserves a specific seat for a given ticket for an authenticated 'USER'.
+    Admins are not allowed to reserve tickets via this endpoint.
+    Upon successful temporary reservation, a Celery task is scheduled to check
+    for reservation expiry after a defined period (e.g., 10 minutes).
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
@@ -1284,32 +1280,24 @@ def reserve_ticket_view(request):
     Request Body (JSON):
     {
         "ticket_id": 123,  // Integer: ID of the ticket
-        "seat_number": 5   // Integer: The specific seat number to reserve (corresponds to reservations.reservation_seat)
+        "seat_number": 5   // Integer: The specific seat number to reserve
     }
 
     Successful Response (JSON - Status Code: 200 OK):
     {
         "status": "success",
-        "message": "Seat successfully reserved temporarily.",
+        "message": "Seat successfully reserved temporarily. Expiry check scheduled.",
         "reservation": {
-            "reservation_id": 101, // ID of the updated reservation record for this seat
+            "reservation_id": 101,
             "ticket_id": 123,
-            "seat_number": 5,      // The seat number that was reserved
+            "seat_number": 5,
             "status": "TEMPORARY",
             "username": "currentuser",
             "reserved_at": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
-            "expires_in_minutes": 10 // Informational
+            "expires_in_minutes": 10
         }
     }
-
-    Error Responses (JSON):
-    - 400 Bad Request: Invalid JSON, missing/invalid 'ticket_id' or 'seat_number'.
-    - 401 Unauthorized: Token missing or invalid.
-    - 404 Not Found: Ticket with the given ID does not exist, or the specified
-                     seat_number does not exist for this ticket.
-    - 409 Conflict: Ticket is inactive, no remaining capacity in the main ticket,
-                     or the specific seat is already reserved or temporarily held by another user.
-    - 500 Internal Server Error: Database or other unexpected server errors.
+    // Error responses as previously defined
     """
     try:
         current_username = request.user_payload.get('sub')
@@ -1345,6 +1333,7 @@ def reserve_ticket_view(request):
                 status=400)
 
         reservation_outcome_details = None
+        reservation_id_to_monitor = None
 
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -1380,20 +1369,21 @@ def reserve_ticket_view(request):
                     raise Http404(f"Seat number {seat_number} not found for ticket ID {ticket_id}.")
 
                 reservation_id_for_seat, current_seat_status, current_seat_user = seat_reservation_info
+                reservation_id_to_monitor = reservation_id_for_seat
 
                 if current_seat_status != 'NOT_RESERVED' or current_seat_user is not None:
                     return JsonResponse({'status': 'error',
                                          'message': f'Seat {seat_number} for ticket ID {ticket_id} is not available for reservation.'},
                                         status=409)
 
-                reservation_time = datetime.now(timezone.utc)
+                reservation_time_utc = datetime.now(timezone.utc)
                 cursor.execute(
                     """
                     UPDATE reservations
                     SET username = %s, reservation_status = 'TEMPORARY', date_and_time_of_reservation = %s
                     WHERE reservation_id = %s; 
                     """,
-                    [current_username, reservation_time, reservation_id_for_seat]
+                    [current_username, reservation_time_utc, reservation_id_for_seat]
                 )
                 if cursor.rowcount == 0:
                     raise DatabaseError(
@@ -1407,19 +1397,31 @@ def reserve_ticket_view(request):
                 if cursor.rowcount == 0:
                     raise DatabaseError(f"Failed to update remaining capacity for ticket ID {ticket_id}.")
 
+                expiry_minutes_setting = getattr(settings, 'RESERVATION_EXPIRY_MINUTES', 10)
                 reservation_outcome_details = {
                     "reservation_id": reservation_id_for_seat,
                     "ticket_id": ticket_id,
                     "seat_number": seat_number,
                     "status": "TEMPORARY",
                     "username": current_username,
-                    "reserved_at": reservation_time.isoformat(),
-                    "expires_in_minutes": 10
+                    "reserved_at": reservation_time_utc.isoformat(),
+                    "expires_in_minutes": expiry_minutes_setting
                 }
+
+            if reservation_id_to_monitor:
+                expiry_seconds = expiry_minutes_setting * 60
+                transaction.on_commit(
+                    lambda: check_and_revert_reservation_task.apply_async(
+                        args=[reservation_id_to_monitor],
+                        countdown=expiry_seconds
+                    )
+                )
+                print(
+                    f"Celery task scheduled for reservation_id {reservation_id_to_monitor} to run in {expiry_minutes_setting} minutes.")
 
         return JsonResponse({
             'status': 'success',
-            'message': f'Seat {seat_number} for ticket ID {ticket_id} reserved temporarily.',
+            'message': f'Seat {seat_number} for ticket ID {ticket_id} reserved temporarily. Expiry check scheduled.',
             'reservation': reservation_outcome_details
         }, status=200)
 

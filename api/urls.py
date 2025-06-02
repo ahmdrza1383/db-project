@@ -12,4 +12,5 @@ urlpatterns = [
     path('ticket-details/<int:ticket_id>/', views.get_ticket_details_view, name='ticket-details'),
     path('cities-list/', views.get_cities_list_view, name='cities-list'),
     path('search-tickets/', views.search_tickets_view, name='search-tickets'),
+    path('reserve-ticket/', views.reserve_ticket_view, name='reserve-ticket'),
 ]
