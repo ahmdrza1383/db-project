@@ -13,4 +13,5 @@ urlpatterns = [
     path('cities-list/', views.get_cities_list_view, name='cities-list'),
     path('search-tickets/', views.search_tickets_view, name='search-tickets'),
     path('reserve-ticket/', views.reserve_ticket_view, name='reserve-ticket'),
+    path('cancel-reservation/<int:reservation_id>/', views.CancelReservationView.as_view(), name='cancel-reservation'),
 ]

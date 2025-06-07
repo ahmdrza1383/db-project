@@ -4,7 +4,11 @@ from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.db import connection, DatabaseError, IntegrityError, transaction
-from datetime import datetime, date
+from django.utils.decorators import method_decorator
+from datetime import datetime, date, timedelta
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
 from api.tasks import expire_reservation
 import json
 import random
@@ -228,7 +232,7 @@ def verify_otp_view(request):
         user_database_info = None
         is_email = '@' in identifier
         db_field_name_for_query = 'email' if is_email else 'phone_number'
-        sql_query_find_user = f"SELECT username, user_role, email, phone_number, name FROM users WHERE {db_field_name_for_query} = %s LIMIT 1"
+        sql_query_find_user = f"SELECT username, user_role, email, phone_number, name, wallet_balance FROM users WHERE {db_field_name_for_query} = %s LIMIT 1"
 
         try:
             with connection.cursor() as cursor:
@@ -258,7 +262,8 @@ def verify_otp_view(request):
             'name': user_database_info.get('name'),
             'email': user_database_info.get('email'),
             'phone_number': user_database_info.get('phone_number'),
-            'role': user_database_info.get('user_role', 'USER')
+            'role': user_database_info.get('user_role', 'USER'),
+            'wallet_balance': user_database_info.get('wallet_balance')
         }
 
         return JsonResponse({
@@ -359,7 +364,7 @@ def user_signup_view(request):
         insert_query = """
             INSERT INTO users (username, password, email, name, phone_number)
             VALUES (%s, %s, %s, %s, %s)
-            RETURNING username, user_role, email, name; 
+            RETURNING username, user_role, email, name, wallet_balance; 
         """
 
         inserted_user_info = None
@@ -389,7 +394,8 @@ def user_signup_view(request):
             'username': inserted_user_info['username'],
             'email': inserted_user_info['email'],
             'name': inserted_user_info.get('name'),
-            'role': inserted_user_info.get('user_role', 'USER')
+            'role': inserted_user_info.get('user_role', 'USER'),
+            'wallet_balance': inserted_user_info.get('wallet_balance', 0)
         }
 
         return JsonResponse({
@@ -636,7 +642,7 @@ def update_user_profile_view(request):
             UPDATE users
             SET {', '.join(set_clauses_list)}
             WHERE username = %s
-            RETURNING username, name, email, phone_number, date_of_birth, city, user_role, authentication_method;
+            RETURNING username, name, email, phone_number, date_of_birth, city, user_role, authentication_method, wallet_balance;
         """
 
         updated_user_data_from_db = None
@@ -1222,7 +1228,6 @@ def get_ticket_details_view(request, ticket_id):
             current_vehicle_id = ticket_base_data['vehicle_id']
             current_vehicle_type = ticket_base_data['vehicle_type']
 
-
             if current_vehicle_type == 'FLIGHT':
                 flight_details_query = """
                                        SELECT airline_name, \
@@ -1272,7 +1277,6 @@ def get_ticket_details_view(request, ticket_id):
                 except json.JSONDecodeError:
                     print(f"Warning: Could not parse facility JSON for vehicle_id {current_vehicle_id}")
                     vehicle_specific_details['facility'] = None
-
 
             cursor.execute(reservations_query, [ticket_id])
             reservation_rows = cursor.fetchall()
@@ -1503,3 +1507,216 @@ def reserve_ticket_view(request):
     except Exception as e:
         print(f"Unexpected error in reserve_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
+class CancelReservationView(APIView):
+    """
+       Handles both checking cancellation policies (GET) and confirming the cancellation (POST)
+       for a specific reservation identified by its ID.
+    """
+
+    @method_decorator(csrf_exempt)
+    @method_decorator(token_required)
+    def get(self, request, reservation_id):
+        """
+        Checks and returns the cancellation penalty for a specific reservation.
+
+        This endpoint allows an authenticated user to preview the financial
+        consequences of canceling a ticket before committing to the action. It
+        verifies that the reservation belongs to the authenticated user and is
+        in a cancellable state ('RESERVED'). The penalty is calculated based on
+        the time remaining until departure.
+
+        Path Parameter:
+            reservation_id (int): The unique identifier for the reservation.
+
+        Request Headers:
+            Authorization: Bearer <JWT_access_token>
+
+        Successful Response (JSON - Status Code: 200 OK):
+        {
+            "status": "success",
+            "cancellation_info": {
+                "reservation_id": 101,
+                "ticket_price": 500000,
+                "time_to_departure_hours": 25.5,
+                "penalty_percentage": 10,
+                "penalty_amount": 50000,
+                "refund_amount": 450000
+            }
+        }
+
+        Error Responses (JSON):
+        - 401 Unauthorized: Token is missing or invalid.
+        - 403 Forbidden: User does not own the reservation.
+        - 404 Not Found: Reservation with the given ID does not exist.
+        - 409 Conflict: Reservation is not in a 'RESERVED' state or departure time has passed.
+        - 500 Internal Server Error: A database or unexpected server error occurred.
+        """
+        current_username = request.user_payload.get('sub')
+
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT
+                        r.username, r.reservation_status, t.departure_start, t.price
+                    FROM reservations r
+                    INNER JOIN tickets t ON r.ticket_id = t.ticket_id
+                    WHERE r.reservation_id = %s;
+                """
+                cursor.execute(query, [reservation_id])
+                reservation_data = cursor.fetchone()
+
+                if not reservation_data:
+                    return Response({'status': 'error', 'message': 'Reservation not found.'},
+                                    status=status.HTTP_404_NOT_FOUND)
+
+                res_username, res_status, departure_start, ticket_price = reservation_data
+
+                if res_username != current_username:
+                    return Response(
+                        {'status': 'error', 'message': 'Forbidden: You can only check your own reservations.'},
+                        status=status.HTTP_403_FORBIDDEN)
+
+                if res_status != 'RESERVED':
+                    return Response(
+                        {'status': 'error', 'message': f'Reservation cannot be canceled. Current status: {res_status}'},
+                        status=status.HTTP_409_CONFLICT)
+
+                time_now = datetime.now()
+                if departure_start <= time_now:
+                    return Response({'status': 'error', 'message': 'Cannot cancel a ticket after its departure time.'},
+                                    status=status.HTTP_409_CONFLICT)
+
+                time_remaining_hours = (departure_start - time_now).total_seconds() / 3600
+                penalty_percentage = 10 if time_remaining_hours > 1 else 50
+                penalty_amount = (ticket_price * penalty_percentage) / 100
+                refund_amount = ticket_price - penalty_amount
+
+                response_data = {
+                    "reservation_id": reservation_id,
+                    "ticket_price": ticket_price,
+                    "time_to_departure_hours": round(time_remaining_hours, 2),
+                    "penalty_percentage": penalty_percentage,
+                    "penalty_amount": int(penalty_amount),
+                    "refund_amount": int(refund_amount)
+                }
+
+                return Response({'status': 'success', 'cancellation_info': response_data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error in GET CancellationView: {e}")
+            return Response({'status': 'error', 'message': 'An unexpected error occurred.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @method_decorator(csrf_exempt)
+    @method_decorator(token_required)
+    def post(self, request, reservation_id):
+        """
+        Confirms the cancellation of a reservation.
+
+        This method performs the actual cancellation for the authenticated user.
+        All database operations are executed within a single atomic transaction
+        to ensure data integrity.
+        The process involves:
+        1. Verifying ownership and cancellable status of the reservation again.
+        2. Re-calculating the penalty and the final refund amount.
+        3. Adding the refund amount to the user's wallet balance.
+        4. Reverting the reservation status to 'NOT_RESERVED' and clearing the user link.
+        5. Incrementing the ticket's remaining capacity by one.
+        6. Creating a 'CANCEL' record in the reservations_history table.
+
+        Path Parameter:
+            reservation_id (int): The unique identifier for the reservation to be canceled.
+
+        Request Headers:
+            Authorization: Bearer <JWT_access_token>
+
+        Successful Response (JSON - Status Code: 200 OK):
+        {
+            "status": "success",
+            "message": "Reservation successfully canceled.",
+            "refund_details": {
+                "refund_amount": 450000,
+                "new_wallet_balance": 1500000
+            }
+        }
+
+        Error Responses (JSON):
+        - Same error responses as the GET method apply here.
+        """
+        current_username = request.user_payload.get('sub')
+
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    query = """
+                        SELECT
+                            r.username, r.ticket_id, r.reservation_status,
+                            t.departure_start, t.price, u.wallet_balance
+                        FROM reservations r
+                        INNER JOIN tickets t ON r.ticket_id = t.ticket_id
+                        INNER JOIN users u ON r.username = u.username
+                        WHERE r.reservation_id = %s FOR UPDATE OF r, t, u;
+                    """
+                    cursor.execute(query, [reservation_id])
+                    data_for_cancellation = cursor.fetchone()
+
+                    if not data_for_cancellation:
+                        return Response({'status': 'error', 'message': 'Reservation not found.'},
+                                        status=status.HTTP_404_NOT_FOUND)
+
+                    res_username, ticket_id, res_status, departure_start, ticket_price, current_wallet_balance = data_for_cancellation
+
+                    if res_username != current_username:
+                        return Response(
+                            {'status': 'error', 'message': 'Forbidden: You can only cancel your own reservations.'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+                    if res_status != 'RESERVED':
+                        return Response({'status': 'error',
+                                         'message': f'Reservation cannot be canceled. Current status: {res_status}'},
+                                        status=status.HTTP_409_CONFLICT)
+
+                    if departure_start <= datetime.now():
+                        return Response(
+                            {'status': 'error', 'message': 'Cannot cancel a ticket after its departure time.'},
+                            status=status.HTTP_409_CONFLICT)
+
+                    time_remaining_hours = (departure_start - datetime.now()).total_seconds() / 3600
+                    penalty_percentage = 10 if time_remaining_hours > 1 else 50
+                    penalty_amount = (ticket_price * penalty_percentage) / 100
+                    refund_amount = ticket_price - penalty_amount
+
+                    new_wallet_balance = current_wallet_balance + refund_amount
+                    cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
+                                   [new_wallet_balance, current_username])
+
+                    cursor.execute(
+                        "UPDATE reservations SET reservation_status = 'NOT_RESERVED', username = NULL, date_and_time_of_reservation = NULL WHERE reservation_id = %s;",
+                        [reservation_id])
+
+                    cursor.execute(
+                        "UPDATE tickets SET remaining_capacity = remaining_capacity + 1 WHERE ticket_id = %s;",
+                        [ticket_id])
+
+                    cursor.execute(
+                        """
+                        INSERT INTO reservations_history (username, reservation_id, operation_type, cancel_by)
+                        VALUES (%s, %s, 'CANCEL', %s);
+                        """,
+                        [current_username, reservation_id, current_username]
+                    )
+            return Response({
+                'status': 'success',
+                'message': 'Reservation successfully canceled.',
+                'refund_details': {
+                    'refund_amount': int(refund_amount),
+                    'new_wallet_balance': int(new_wallet_balance)
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error in POST CancellationView: {e}")
+            return Response({'status': 'error', 'message': 'An unexpected error occurred during cancellation.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)

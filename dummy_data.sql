@@ -1050,3 +1050,20 @@ INSERT INTO reports (username, reservation_id, report_type, report_text)
 VALUES
 -- گزارش‌های نوع PAYMENT
 ('ali123', 1, 'PAYMENT', 'IUFHJ');
+
+
+-- new ticket
+WITH new_ticket AS (
+    INSERT INTO tickets (vehicle_id, origin_location_id, destination_location_id, departure_start, departure_end, price, total_capacity, remaining_capacity)
+    VALUES (76, 1, 21, '2025-07-10 23:00:00', '2025-07-11 03:00:00', 450000, 20, 20)
+    RETURNING ticket_id
+)
+
+INSERT INTO reservations (ticket_id, reservation_status, username, date_and_time_of_reservation, reservation_seat)
+SELECT
+    (SELECT ticket_id FROM new_ticket),
+    'NOT_RESERVED',
+    NULL,
+    NULL,
+    generate_series(1, 20)
+;

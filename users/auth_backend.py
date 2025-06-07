@@ -5,7 +5,7 @@ import hashlib
 
 class CustomUser:
     def __init__(self, username, password, name, email, phone_number, city, date_of_sign_in=None, profile_picture=None,
-                 user_role='USER', authentication_method='EMAIL'):
+                 user_role='USER', authentication_method='EMAIL', wallet_balance=0):
         self.username = username
         self.password = password
         self.name = name
@@ -16,6 +16,7 @@ class CustomUser:
         self.profile_picture = profile_picture
         self.user_role = user_role
         self.authentication_method = authentication_method
+        self.wallet_balance = wallet_balance  
         self.is_authenticated = False
         self.is_active = True
         self.is_staff = False

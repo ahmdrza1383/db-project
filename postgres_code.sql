@@ -12,17 +12,18 @@ CREATE TYPE authentication_method As ENUM ('EMAIL', 'PHONE_NUMBER');
 CREATE TABLE users
 (
     username              VARCHAR(50) PRIMARY KEY,
-    password              VARCHAR(100)                                                 NOT NULL,
-    user_role             user_role                                                    NOT NULL DEFAULT 'USER',
+    password              VARCHAR(100)          NOT NULL,
+    user_role             user_role             NOT NULL DEFAULT 'USER',
     name                  VARCHAR(100),
-    email                 VARCHAR(100)                                                 NOT NULL UNIQUE,
+    email                 VARCHAR(100)          NOT NULL UNIQUE,
     phone_number          VARCHAR(15) UNIQUE,
     city                  INTEGER REFERENCES locations (location_id) ON UPDATE CASCADE,
-    date_of_sign_in       TIMESTAMP                                                             DEFAULT CURRENT_TIMESTAMP,
+    date_of_sign_in       TIMESTAMP                      DEFAULT CURRENT_TIMESTAMP,
     profile_picture       BYTEA,
-    authentication_method authentication_method                                        NOT NULL DEFAULT 'EMAIL',
-    profile_status        BOOLEAN                                                               DEFAULT TRUE,
-    date_of_birth DATE
+    authentication_method authentication_method NOT NULL DEFAULT 'EMAIL',
+    profile_status        BOOLEAN                        DEFAULT TRUE,
+    date_of_birth         DATE,
+    wallet_balance        INTEGER               not null default 0
 );
 
 CREATE TYPE vehicle_type As ENUM ('BUS', 'TRAIN', 'FLIGHT');
@@ -119,17 +120,22 @@ CREATE TABLE reports
 );
 
 CREATE TYPE operation_type As ENUM ('BUY', 'CANCEL');
-CREATE TYPE reservation_history_status As ENUM ('SUCCESSFUL', 'UNSUCCESSFUL', 'CANCELED');
+CREATE TYPE buy_status AS ENUM ('SUCCESSFUL', 'UNSUCCESSFUL')
 
 CREATE TABLE reservations_history
 (
     reservation_history_id     SERIAL PRIMARY KEY,
     username                   VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE          NOT NULL,
     reservation_id             INTEGER REFERENCES reservations (reservation_id) ON UPDATE CASCADE NOT NULL,
-    date_and_time              TIMESTAMP                                                                                                        DEFAULT CURRENT_TIMESTAMP,
+    date_and_time              TIMESTAMP                                                          DEFAULT CURRENT_TIMESTAMP,
     operation_type             operation_type                                                     NOT NULL,
-    cancel_by                  VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE CHECK (operation_type = 'CANCEL' OR cancel_by IS NULL) DEFAULT NULL,
-    reservation_history_status reservation_history_status
+    cancel_by                  VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE,
+    buy_status                 buy_status,
+
+    CONSTRAINT check_status_for_operation_type CHECK (
+        (operation_type = 'CANCEL' AND buy_status IS NULL AND cancel_by IS NOT NULL) OR
+        (operation_type = 'BUY' AND buy_status IS NOT NULL AND cancel_by IS NULL)
+    )
 );
 
 CREATE TYPE request_subject AS ENUM ('CANCEL', 'CHANGE_DATE');
@@ -163,6 +169,3 @@ CREATE INDEX idx_reservations_history_operation_type ON reservations_history (op
 CREATE INDEX idx_users_name ON users (name);
 CREATE INDEX idx_flights_airline_name ON flights (airline_name);
 CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
-
-ALTER TABLE users
-ALTER COLUMN city DROP NOT NULL;

@@ -6,6 +6,7 @@ import time
 
 app = Celery('tasks', broker='redis://redis:6379/0')
 
+
 def get_db_connection(retries=5, delay=3):
     for i in range(retries):
         try:
@@ -18,9 +19,10 @@ def get_db_connection(retries=5, delay=3):
             )
             return conn
         except psycopg2.OperationalError as e:
-            print(f"DB connection failed: {e}, retrying {i+1}/{retries}...")
+            print(f"DB connection failed: {e}, retrying {i + 1}/{retries}...")
             time.sleep(delay)
     raise Exception("Could not connect to the database after retries.")
+
 
 @app.task
 def expire_reservation(reservation_id):
