@@ -1,65 +1,65 @@
-from celery import shared_task
-from django.db import connection, transaction
-from datetime import datetime, timezone
+from celery import Celery
+from datetime import datetime, timedelta
+import psycopg2
+import os
+import time
 
+app = Celery('tasks', broker='redis://redis:6379/0')
 
-@shared_task(bind=True, max_retries=3)
-def check_and_revert_reservation_task(self, reservation_id):
-    """
-    Celery task to check a specific temporary reservation after its TTL
-    and revert it if it hasn't been confirmed (paid).
-    """
-    self.stdout.write(f"[{datetime.now(timezone.utc).isoformat()}] Task started for reservation_id: {reservation_id}")
-    try:
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT r.ticket_id, r.reservation_seat, t.remaining_capacity
-                    FROM reservations r
-                    INNER JOIN tickets t ON r.ticket_id = t.ticket_id
-                    WHERE r.reservation_id = %s AND r.reservation_status = 'TEMPORARY'
-                    FOR UPDATE OF r, t; 
-                    """,
-                    [reservation_id]
-                )
-                reservation_info = cursor.fetchone()
-
-                if not reservation_info:
-                    self.stdout.write(
-                        f"Reservation ID {reservation_id} not found or no longer temporary. No action needed.")
-                    return f"Reservation {reservation_id} not found or status changed."
-
-                ticket_id_for_revert, seats_in_this_reservation, current_ticket_capacity = reservation_info
-
-                cursor.execute(
-                    """
-                    UPDATE reservations 
-                    SET reservation_status = 'NOT_RESERVED', username = NULL, date_and_time_of_reservation = NULL
-                    WHERE reservation_id = %s;
-                    """,
-                    [reservation_id]
-                )
-
-                new_capacity = current_ticket_capacity + seats_in_this_reservation
-                cursor.execute(
-                    "UPDATE tickets SET remaining_capacity = %s WHERE ticket_id = %s;",
-                    [new_capacity, ticket_id_for_revert]
-                )
-
-                self.stdout.write(self.style.SUCCESS(
-                    f"Reverted temporary reservation ID {reservation_id} for ticket {ticket_id_for_revert}. Capacity adjusted."))
-                return f"Reservation {reservation_id} reverted successfully."
-
-    except Exception as e:
-        self.stderr.write(self.style.ERROR(f"Error processing reservation_id {reservation_id}: {e}"))
+def get_db_connection(retries=5, delay=3):
+    for i in range(retries):
         try:
-            raise self.retry(exc=e, countdown=60)
-        except self.MaxRetriesExceededError:
-            self.stderr.write(
-                self.style.ERROR(f"Max retries exceeded for reservation_id {reservation_id} with error: {e}"))
-            return f"Failed to revert reservation {reservation_id} after multiple retries: {e}"
-        except Exception as retry_exc:
-            self.stderr.write(self.style.ERROR(
-                f"Could not retry task for reservation_id {reservation_id}. Original error: {e}. Retry_exc: {retry_exc}"))
-            return f"Failed to revert reservation {reservation_id}, retry mechanism failed: {e}"
+            conn = psycopg2.connect(
+                dbname=os.getenv("POSTGRES_DB"),
+                user=os.getenv("POSTGRES_USER"),
+                password=os.getenv("POSTGRES_PASSWORD"),
+                host="db",
+                port=5432
+            )
+            return conn
+        except psycopg2.OperationalError as e:
+            print(f"DB connection failed: {e}, retrying {i+1}/{retries}...")
+            time.sleep(delay)
+    raise Exception("Could not connect to the database after retries.")
+
+@app.task
+def expire_reservation(reservation_id):
+    print("Running expire_reservation task for id:", reservation_id)
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+                SELECT date_and_time_of_reservation, reservation_status
+                FROM reservations
+                WHERE reservation_id = %s
+                """, (reservation_id,))
+
+    row = cur.fetchone()
+    print("Fetched row:", row)
+
+    if row and row[1] == 'TEMPORARY':
+        reserve_time = row[0]
+        if (datetime.utcnow() - reserve_time).total_seconds() > 590:
+            cur.execute("""
+                        UPDATE reservations
+                        SET reservation_status           = 'NOT_RESERVED',
+                            username                     = NULL,
+                            date_and_time_of_reservation = NULL
+                        WHERE reservation_id = %s
+                        """, (reservation_id,))
+
+            cur.execute("""
+                        UPDATE tickets
+                        SET remaining_capacity = remaining_capacity + 1
+                        WHERE ticket_id = (SELECT ticket_id FROM reservations WHERE reservation_id = %s)
+                        """, (reservation_id,))
+
+            conn.commit()
+            print(f"Reservation {reservation_id} expired and ticket updated.")
+        else:
+            print(f"Reservation {reservation_id} is not expired yet.")
+    else:
+        print(f"No reservation found or status is not TEMPORARY for id {reservation_id}.")
+
+    cur.close()
+    conn.close()

@@ -164,4 +164,5 @@ CREATE INDEX idx_users_name ON users (name);
 CREATE INDEX idx_flights_airline_name ON flights (airline_name);
 CREATE INDEX idx_reports_reservation_id ON reports (reservation_id);
 
-
+ALTER TABLE users
+ALTER COLUMN city DROP NOT NULL;

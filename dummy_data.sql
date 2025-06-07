@@ -911,12 +911,11 @@ VALUES
 ('sara456', 100, '2025-05-23 08:15:00', 'BUY');
 
 update reservations_history
-set "reservation_history_status" = 'SUCCESSFUL'
+set "reservation_history_status" = 'SUCCESSFUL';
 
 
 -- افزودن 30 گزارش
-    INSERT
-INTO reports (username, reservation_id, report_type, report_text)
+INSERT INTO reports (username, reservation_id, report_type, report_text)
 VALUES
 -- گزارش‌های نوع PAYMENT
     ('ali123', 1, 'PAYMENT', 'پرداخت من دو بار کسر شده است، لطفاً بررسی کنید.'), ('sara456', 2, 'PAYMENT', 'مبلغ پرداخت با تیکت مطابقت ندارد.'), ('mohammad789', 3, 'PAYMENT', 'تراکنش پرداخت ناموفق بود اما رزرو ثبت شده است.'),
@@ -1020,7 +1019,7 @@ VALUES ('mehdi2121', 101, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
        ('golnaz3434', 107, '2025-04-09 23:01:00', 'BUY', 'SUCCESSFUL');
 
 -- PAID AND CANCEL IT
-insert into INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method)
+INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method)
 VALUES
     ('parvaneh4040', 108, 3000000, 'PAID', '2024-04-06 12:00:00', 'WALLET');
 
@@ -1040,6 +1039,7 @@ values ('mehdi2121', 101, 'CANCEL', 'test', TRUE, FALSE, 'admin1'),
        ('mehdi2121', 110, 'CANCEL', 'test', TRUE, TRUE, 'admin2'),
        ('narges2222', 105, 'CANCEL', 'test', TRUE, FALSE, 'admin2'),
        ('narges2222', 109, 'CANCEL', 'test', TRUE, TRUE, 'admin1');
+
 INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
 VALUES ('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'CANCELED'),
        ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'CANCELED');

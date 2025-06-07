@@ -5,13 +5,14 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.db import connection, DatabaseError, IntegrityError, transaction
 from datetime import datetime, date
+from api.tasks import expire_reservation
 import json
 import random
 import string
 import re
 
 from .auth_utils import *
-from .tasks import check_and_revert_reservation_task
+from .tasks import expire_reservation
 
 
 def generate_otp(length=6):
@@ -1123,12 +1124,8 @@ def search_tickets_view(request):
 def get_ticket_details_view(request, ticket_id):
     """
     Retrieves and displays detailed information for a specific ticket,
-    including details about its associated vehicle (flight, train, or bus). [cite: 1]
-
-    This API provides comprehensive details for a ticket including its origin,
-    destination, departure and arrival times, price, special amenities/facilities,
-    and remaining capacity. [cite: 1] If the ticket pertains to a flight, train, or bus,
-    specific attributes of that mode of transport are also displayed. [cite: 1]
+    including details about its associated vehicle (flight, train, or bus)
+    AND limited details of its associated reservations (reservation_id, reservation_status, reservation_seat).
 
     Path Parameter:
         ticket_id (int): The unique identifier for the ticket.
@@ -1154,11 +1151,15 @@ def get_ticket_details_view(request, ticket_id):
             "vehicle_type": "TRAIN", // or "FLIGHT", "BUS"
             "vehicle_details": {
                 // Fields specific to TRAIN, FLIGHT, or BUS
-                // Example for TRAIN:
-                // "train_stars": 4,
-                // "choosing_a_closed_coupe": true,
-                // "facility": {"wifi": true, "restaurant": true}
-            }
+            },
+            "reservations": [
+                {
+                    "reservation_id": 101,
+                    "reservation_status": "TEMPORARY",
+                    "reservation_seat": 5
+                },
+                // ... more reservations for this ticket
+            ]
         }
     }
 
@@ -1172,24 +1173,43 @@ def get_ticket_details_view(request, ticket_id):
     """
     try:
         main_ticket_query = """
-            SELECT
-                t.ticket_id, t.vehicle_id, t.departure_start, t.departure_end,
-                t.price, t.total_capacity, t.remaining_capacity, t.ticket_status,
-                t.is_round_trip, t.return_start, t.return_end,
-                origin_loc.city AS origin_city, origin_loc.province AS origin_province,
-                dest_loc.city AS destination_city, dest_loc.province AS destination_province,
-                v.vehicle_type
-            FROM tickets t
-            INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
-            INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
-            INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
-            WHERE t.ticket_id = %s;
-        """
+                            SELECT t.ticket_id, \
+                                   t.vehicle_id, \
+                                   t.departure_start, \
+                                   t.departure_end, \
+                                   t.price, \
+                                   t.total_capacity, \
+                                   t.remaining_capacity, \
+                                   t.ticket_status, \
+                                   t.is_round_trip, \
+                                   t.return_start, \
+                                   t.return_end, \
+                                   origin_loc.city     AS origin_city, \
+                                   origin_loc.province AS origin_province, \
+                                   dest_loc.city       AS destination_city, \
+                                   dest_loc.province   AS destination_province, \
+                                   v.vehicle_type
+                            FROM tickets t
+                                     INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
+                                     INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
+                                     INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+                            WHERE t.ticket_id = %s; \
+                            """
+
+        reservations_query = """
+                             SELECT reservation_id, \
+                                    reservation_status, \
+                                    reservation_seat
+                             FROM reservations
+                             WHERE ticket_id = %s;
+                             """
 
         vehicle_specific_details = {}
         ticket_base_data = None
+        reservations_data = []
 
         with connection.cursor() as cursor:
+
             cursor.execute(main_ticket_query, [ticket_id])
             main_ticket_row_tuple = cursor.fetchone()
 
@@ -1202,12 +1222,19 @@ def get_ticket_details_view(request, ticket_id):
             current_vehicle_id = ticket_base_data['vehicle_id']
             current_vehicle_type = ticket_base_data['vehicle_type']
 
+
             if current_vehicle_type == 'FLIGHT':
                 flight_details_query = """
-                    SELECT airline_name, flight_class, number_of_stop, flight_code, 
-                           origin_airport, destination_airport, facility
-                    FROM flights WHERE vehicle_id = %s;
-                """
+                                       SELECT airline_name, \
+                                              flight_class, \
+                                              number_of_stop, \
+                                              flight_code,
+                                              origin_airport, \
+                                              destination_airport, \
+                                              facility
+                                       FROM flights \
+                                       WHERE vehicle_id = %s; \
+                                       """
                 cursor.execute(flight_details_query, [current_vehicle_id])
                 details_tuple = cursor.fetchone()
                 if details_tuple:
@@ -1216,9 +1243,10 @@ def get_ticket_details_view(request, ticket_id):
 
             elif current_vehicle_type == 'TRAIN':
                 train_details_query = """
-                    SELECT train_stars, choosing_a_closed_coupe, facility
-                    FROM trains WHERE vehicle_id = %s;
-                """
+                                      SELECT train_stars, choosing_a_closed_coupe, facility
+                                      FROM trains \
+                                      WHERE vehicle_id = %s; \
+                                      """
                 cursor.execute(train_details_query, [current_vehicle_id])
                 details_tuple = cursor.fetchone()
                 if details_tuple:
@@ -1227,9 +1255,10 @@ def get_ticket_details_view(request, ticket_id):
 
             elif current_vehicle_type == 'BUS':
                 bus_details_query = """
-                    SELECT company_name, bus_type, number_of_chairs, facility
-                    FROM buses WHERE vehicle_id = %s;
-                """
+                                    SELECT company_name, bus_type, number_of_chairs, facility
+                                    FROM buses \
+                                    WHERE vehicle_id = %s; \
+                                    """
                 cursor.execute(bus_details_query, [current_vehicle_id])
                 details_tuple = cursor.fetchone()
                 if details_tuple:
@@ -1244,7 +1273,17 @@ def get_ticket_details_view(request, ticket_id):
                     print(f"Warning: Could not parse facility JSON for vehicle_id {current_vehicle_id}")
                     vehicle_specific_details['facility'] = None
 
+
+            cursor.execute(reservations_query, [ticket_id])
+            reservation_rows = cursor.fetchall()
+            reservation_columns = [col[0] for col in cursor.description]
+
+            for row in reservation_rows:
+                reservation = dict(zip(reservation_columns, row))
+                reservations_data.append(reservation)
+
         ticket_base_data['vehicle_details'] = vehicle_specific_details
+        ticket_base_data['reservations'] = reservations_data
 
         datetime_fields = ['departure_start', 'departure_end', 'return_start', 'return_end']
         for field_name in datetime_fields:
@@ -1273,6 +1312,7 @@ def reserve_ticket_view(request):
     Admins are not allowed to reserve tickets via this endpoint.
     Upon successful temporary reservation, a Celery task is scheduled to check
     for reservation expiry after a defined period (e.g., 10 minutes).
+    Also, the temporary reservation details are cached in Redis for 10 minutes.
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
@@ -1334,6 +1374,7 @@ def reserve_ticket_view(request):
 
         reservation_outcome_details = None
         reservation_id_to_monitor = None
+        expiry_minutes_setting = getattr(settings, 'RESERVATION_EXPIRY_MINUTES', 10)  # از settings خوانده شود
 
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -1357,11 +1398,12 @@ def reserve_ticket_view(request):
                         {'status': 'error', 'message': f'No remaining capacity for ticket ID {ticket_id}.'}, status=409)
 
                 find_specific_seat_query = """
-                    SELECT reservation_id, reservation_status, username
-                    FROM reservations
-                    WHERE ticket_id = %s AND reservation_seat = %s
-                    FOR UPDATE; 
-                """
+                                           SELECT reservation_id, reservation_status, username
+                                           FROM reservations
+                                           WHERE ticket_id = %s \
+                                             AND reservation_seat = %s
+                                               FOR UPDATE; \
+                                           """
                 cursor.execute(find_specific_seat_query, [ticket_id, seat_number])
                 seat_reservation_info = cursor.fetchone()
 
@@ -1380,14 +1422,31 @@ def reserve_ticket_view(request):
                 cursor.execute(
                     """
                     UPDATE reservations
-                    SET username = %s, reservation_status = 'TEMPORARY', date_and_time_of_reservation = %s
-                    WHERE reservation_id = %s; 
+                    SET username                     = %s,
+                        reservation_status           = 'TEMPORARY',
+                        date_and_time_of_reservation = %s
+                    WHERE reservation_id = %s RETURNING reservation_id, ticket_id, reservation_seat, reservation_status, username, date_and_time_of_reservation;
                     """,
                     [current_username, reservation_time_utc, reservation_id_for_seat]
                 )
                 if cursor.rowcount == 0:
                     raise DatabaseError(
                         f"Failed to update reservation status for reservation ID {reservation_id_for_seat}.")
+
+                updated_reservation_row = cursor.fetchone()
+                if not updated_reservation_row:
+                    raise DatabaseError("Failed to retrieve updated reservation details after update.")
+
+                updated_reservation_columns_from_db = [col[0] for col in cursor.description]
+                reservation_outcome_details = dict(zip(updated_reservation_columns_from_db, updated_reservation_row))
+
+                reservation_outcome_details['status'] = reservation_outcome_details.pop('reservation_status')
+                reservation_outcome_details['reserved_at'] = reservation_outcome_details.pop(
+                    'date_and_time_of_reservation')
+
+                if reservation_outcome_details.get('reserved_at') and \
+                        hasattr(reservation_outcome_details['reserved_at'], 'isoformat'):
+                    reservation_outcome_details['reserved_at'] = reservation_outcome_details['reserved_at'].isoformat()
 
                 new_remaining_capacity = current_remaining_capacity - 1
                 cursor.execute(
@@ -1397,27 +1456,37 @@ def reserve_ticket_view(request):
                 if cursor.rowcount == 0:
                     raise DatabaseError(f"Failed to update remaining capacity for ticket ID {ticket_id}.")
 
-                expiry_minutes_setting = getattr(settings, 'RESERVATION_EXPIRY_MINUTES', 10)
-                reservation_outcome_details = {
-                    "reservation_id": reservation_id_for_seat,
-                    "ticket_id": ticket_id,
-                    "seat_number": seat_number,
-                    "status": "TEMPORARY",
-                    "username": current_username,
-                    "reserved_at": reservation_time_utc.isoformat(),
-                    "expires_in_minutes": expiry_minutes_setting
-                }
-
             if reservation_id_to_monitor:
                 expiry_seconds = expiry_minutes_setting * 60
                 transaction.on_commit(
-                    lambda: check_and_revert_reservation_task.apply_async(
+                    lambda: expire_reservation.apply_async(
                         args=[reservation_id_to_monitor],
                         countdown=expiry_seconds
                     )
                 )
                 print(
                     f"Celery task scheduled for reservation_id {reservation_id_to_monitor} to run in {expiry_minutes_setting} minutes.")
+
+            if redis_client:
+                redis_key = f"temp_reservation:{reservation_id_to_monitor}"
+
+                reservation_for_cache = reservation_outcome_details.copy()
+                reservation_for_cache['expires_in_minutes'] = expiry_minutes_setting
+
+                try:
+                    redis_client.setex(
+                        redis_key,
+                        expiry_seconds,
+                        json.dumps(reservation_for_cache)
+                    )
+                    print(
+                        f"Temporary reservation {reservation_id_to_monitor} cached in Redis for {expiry_minutes_setting} minutes.")
+                except redis.exceptions.RedisError as re_cache_err:
+                    print(f"Redis error during temporary reservation caching: {re_cache_err}")
+                except Exception as e:
+                    print(f"Error preparing reservation for Redis cache: {e}")
+
+        reservation_outcome_details['expires_in_minutes'] = expiry_minutes_setting
 
         return JsonResponse({
             'status': 'success',
