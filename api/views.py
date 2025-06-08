@@ -455,17 +455,15 @@ def user_signup_view(request):
 @token_required
 def update_user_profile_view(request):
     """
-    Updates profile information for the authenticated user.
+    Updates profile information for the authenticated user, and allows adding to wallet balance.
 
     This API endpoint allows an authenticated user to update their profile details.
     All fields in the request body are optional. To keep a field unchanged,
     simply omit it from the request payload.
-    For optional fields like 'name', 'phone_number', 'date_of_birth', and 'city_id',
-    sending a 'null' value in the request payload will result in a 400 error;
-    these fields cannot be explicitly set to null via this API if you mean to clear them.
-    If these fields are already null in the database, sending 'null' might be accepted
-    (effectively no change) or still rejected based on the strict interpretation below.
-    The current stricter interpretation is to reject explicit 'null' for these.
+
+    A new field 'add_to_wallet_balance' is introduced. If provided, the specified
+    amount will be added to the user's current wallet balance in the 'users' table ONLY.
+    No record will be created in the 'payments' table for this operation.
 
     Sensitive fields like username, password, and email can be changed by providing
     'new_username', 'new_password', and 'new_email' respectively. Changing
@@ -485,9 +483,9 @@ def update_user_profile_view(request):
         "new_password": "aVeryStrongPassword!@#",
         "new_email": "new.email.unique@example.com",
         "phone_number": "09123456780",
-        "date_of_birth": "1990-01-01",
-        "city_id": 10, // Integer ID referencing locations table
-        "new_authentication_method": "PHONE_NUMBER" // 'EMAIL' or 'PHONE_NUMBER'
+        "city_id": 10,           // Integer ID referencing locations table
+        "new_authentication_method": "PHONE_NUMBER", // 'EMAIL' or 'PHONE_NUMBER'
+        "add_to_wallet_balance": 50000 // Integer: amount to add to wallet
     }
 
     Successful Response (JSON - Status Code: 200 OK):
@@ -501,22 +499,22 @@ def update_user_profile_view(request):
             "name": "New Full Name",
             "email": "current_or_new_email@example.com",
             "phone_number": "09123456780",
-            "date_of_birth": "1990-01-01",
-            "city_id": 10, // or null if it was set to null and DB allows
+            "city_id": 10,
             "authentication_method": "PHONE_NUMBER",
-            "role": "USER" // Or actual role
+            "role": "USER",
+            "wallet_balance": 1500000 // Updated wallet balance
         }
     }
 
     Error Responses (JSON):
     - 400 Bad Request: Invalid JSON, missing required fields for sensitive operations,
-                       invalid data format (e.g., email, phone, date),
-                       explicitly sending 'null' for 'name', 'phone_number', 'date_of_birth', 'city_id'.
+                       invalid data format (e.g., email, phone),
+                       negative or invalid amount for wallet top-up,
+                       explicitly sending 'null' for certain fields.
     - 401 Unauthorized: Token missing or invalid.
-    - 404 Not Found: User not found (should not happen if token is valid).
+    - 404 Not Found: User not found.
     - 409 Conflict: Username, email, or phone number already exists.
     - 500 Internal Server Error: Database or other unexpected server errors.
-    - 503 Service Unavailable: Redis service unavailable (if it's critical for an operation).
     """
     try:
         current_username_from_token = request.user_payload.get('sub')
@@ -536,11 +534,26 @@ def update_user_profile_view(request):
 
         fields_to_update_in_db = {}
         requires_new_jwt_token = False
+        add_to_wallet_amount = 0
+
+        if 'add_to_wallet_balance' in data_payload:
+            wallet_amount_input = data_payload['add_to_wallet_balance']
+            try:
+                add_to_wallet_amount = int(wallet_amount_input)
+                if add_to_wallet_amount <= 0:
+                    return JsonResponse(
+                        {'status': 'error', 'message': 'Amount to add to wallet must be a positive integer.'},
+                        status=400)
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {'status': 'error', 'message': 'Invalid amount for wallet balance. Must be an integer.'},
+                    status=400)
+
+            data_payload.pop('add_to_wallet_balance')
 
         optional_fields_no_explicit_null = {
             'name': 'Name',
             'phone_number': 'Phone number',
-            'date_of_birth': 'Date of birth',
             'city_id': 'City ID'
         }
 
@@ -568,22 +581,6 @@ def update_user_profile_view(request):
                         return JsonResponse(
                             {'status': 'error', 'message': 'Invalid phone number format (09XXXXXXXXX).'}, status=400)
                     fields_to_update_in_db['phone_number'] = phone_to_validate
-
-                elif field_key == 'date_of_birth':
-                    dob_str = str(value).strip()
-                    if not dob_str:
-                        return JsonResponse(
-                            {'status': 'error', 'message': 'Date of birth cannot be empty if provided.'}, status=400)
-                    try:
-                        dob_obj = datetime.strptime(dob_str, '%Y-%m-%d').date()
-                        if dob_obj > date.today():
-                            return JsonResponse(
-                                {'status': 'error', 'message': 'Date of birth cannot be in the future.'}, status=400)
-                        fields_to_update_in_db['date_of_birth'] = dob_obj
-                    except ValueError:
-                        return JsonResponse(
-                            {'status': 'error', 'message': 'Invalid date format for date_of_birth (YYYY-MM-DD).'},
-                            status=400)
 
                 elif field_key == 'city_id':
                     if not isinstance(value, int):
@@ -630,43 +627,100 @@ def update_user_profile_view(request):
                     status=400)
             fields_to_update_in_db['authentication_method'] = auth_method_val
 
-        if not fields_to_update_in_db:
+        if not fields_to_update_in_db and add_to_wallet_amount == 0:
             return JsonResponse({'status': 'error', 'message': 'No valid fields or changes provided for update.'},
                                 status=400)
 
-        set_clauses_list = [f"{db_column} = %s" for db_column in fields_to_update_in_db.keys()]
-        params_for_sql_update = list(fields_to_update_in_db.values())
-        params_for_sql_update.append(current_username_from_token)
-
-        update_sql_query = f"""
-            UPDATE users
-            SET {', '.join(set_clauses_list)}
-            WHERE username = %s
-            RETURNING username, name, email, phone_number, date_of_birth, city, user_role, authentication_method, wallet_balance;
-        """
-
         updated_user_data_from_db = None
-        with connection.cursor() as cursor:
-            cursor.execute(update_sql_query, params_for_sql_update)
-            if cursor.rowcount == 0:
-                return JsonResponse({'status': 'error', 'message': 'User not found or no effective changes applied.'},
-                                    status=404)
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT username,
+                           name,
+                           email,
+                           phone_number,
+                           date_of_sign_in,
+                           city,
+                           user_role,
+                           authentication_method,
+                           profile_status,
+                           wallet_balance
+                    FROM users
+                    WHERE username = %s FOR UPDATE;
+                    """,
+                    [current_username_from_token]
+                )
+                current_user_data = cursor.fetchone()
+                if not current_user_data:
+                    return JsonResponse({'status': 'error', 'message': 'User not found.'}, status=404)
 
-            updated_row_tuple = cursor.fetchone()
-            if updated_row_tuple:
-                db_columns_from_returning = [col[0] for col in cursor.description]
-                updated_user_data_from_db = dict(zip(db_columns_from_returning, updated_row_tuple))
-            else:
-                raise DatabaseError(
-                    "User update query executed (rowcount > 0) but failed to return updated information via RETURNING.")
+                current_user_columns = [col[0] for col in cursor.description]
+                current_user_dict = dict(zip(current_user_columns, current_user_data))
+                current_wallet_balance = current_user_dict.get('wallet_balance', 0)
+
+                final_username_for_db_ops = current_user_dict['username']
+                update_set_clauses = []
+                update_params = []
+
+                if fields_to_update_in_db:
+                    for db_column, value in fields_to_update_in_db.items():
+                        update_set_clauses.append(f"{db_column} = %s")
+                        update_params.append(value)
+
+                    if 'username' in fields_to_update_in_db:
+                        final_username_for_db_ops = fields_to_update_in_db['username']
+
+                if add_to_wallet_amount > 0:
+                    new_wallet_balance = current_wallet_balance + add_to_wallet_amount
+                    update_set_clauses.append("wallet_balance = %s")
+                    update_params.append(new_wallet_balance)
+                    current_user_dict['wallet_balance'] = new_wallet_balance
+
+                if update_set_clauses:
+                    update_sql_query = f"""
+                        UPDATE users
+                        SET {', '.join(update_set_clauses)}
+                        WHERE username = %s;
+                    """
+                    update_params.append(current_username_from_token)
+                    cursor.execute(update_sql_query, update_params)
+                    if cursor.rowcount == 0:
+                        print(f"Warning: User {current_username_from_token} not updated by main update query.")
+
+                cursor.execute(
+                    """
+                    SELECT username,
+                           name,
+                           email,
+                           phone_number,
+                           date_of_sign_in,
+                           city,
+                           user_role,
+                           authentication_method,
+                           profile_status,
+                           wallet_balance
+                    FROM users
+                    WHERE username = %s;
+                    """,
+                    [final_username_for_db_ops]
+                )
+                final_user_row_tuple = cursor.fetchone()
+                if not final_user_row_tuple:
+                    raise DatabaseError("Failed to retrieve final user data after update/wallet top-up.")
+
+                final_user_columns = [col[0] for col in cursor.description]
+                updated_user_data_from_db = dict(zip(final_user_columns, final_user_row_tuple))
 
         user_info_for_response_and_cache = updated_user_data_from_db.copy()
-        if user_info_for_response_and_cache.get('date_of_birth') and isinstance(
-                user_info_for_response_and_cache['date_of_birth'], date):
-            user_info_for_response_and_cache['date_of_birth'] = user_info_for_response_and_cache[
-                'date_of_birth'].isoformat()
+
         if 'city' in user_info_for_response_and_cache:
             user_info_for_response_and_cache['city_id'] = user_info_for_response_and_cache.pop('city')
+
+        if user_info_for_response_and_cache.get('date_of_sign_in') and \
+                hasattr(user_info_for_response_and_cache['date_of_sign_in'], 'isoformat'):
+            user_info_for_response_and_cache['date_of_sign_in'] = user_info_for_response_and_cache[
+                'date_of_sign_in'].isoformat()
 
         final_username_in_db = user_info_for_response_and_cache.get('username')
 
@@ -711,19 +765,28 @@ def update_user_profile_view(request):
         return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
     except IntegrityError as e:
         err_str = str(e).lower()
+
         if "users_pkey" in err_str or "users_username_key" in err_str or (
                 "duplicate key" in err_str and "username" in err_str):
             return JsonResponse({'status': 'error', 'message': 'This username is already taken.'}, status=409)
         if "users_email_key" in err_str or ("duplicate key" in err_str and "email" in err_str):
             return JsonResponse({'status': 'error', 'message': 'This email address is already registered.'}, status=409)
         if "users_phone_number_key" in err_str or ("duplicate key" in err_str and "phone_number" in err_str):
-            if 'phone_number' in fields_to_update_in_db and fields_to_update_in_db.get('phone_number') is not None:
+            if 'phone_number' in fields_to_update_in_db:
                 return JsonResponse({'status': 'error', 'message': 'This phone number is already registered.'},
                                     status=409)
+            else:
+                print(f"Database IntegrityError (phone_number related but not directly provided): {e}")
+                return JsonResponse(
+                    {'status': 'error',
+                     'message': 'A data integrity error occurred related to phone number. Check your inputs.'},
+                    status=409)
+
         if "violates foreign key constraint" in err_str and (
                 "users_city_fkey" in err_str or "users_city_id_fkey" in err_str):
             if 'city' in fields_to_update_in_db and fields_to_update_in_db.get('city') is not None:
                 return JsonResponse({'status': 'error', 'message': 'Invalid city ID provided.'}, status=400)
+
         print(f"DB IntegrityError on profile update: {e}")
         return JsonResponse(
             {'status': 'error', 'message': 'Data integrity error. Check unique fields or foreign keys.'}, status=409)
@@ -733,6 +796,7 @@ def update_user_profile_view(request):
     except Exception as e:
         print(f"Unexpected error in update_user_profile_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
 
 
 @csrf_exempt
