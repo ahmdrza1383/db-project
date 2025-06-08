@@ -1720,3 +1720,130 @@ class CancelReservationView(APIView):
             print(f"Error in POST CancellationView: {e}")
             return Response({'status': 'error', 'message': 'An unexpected error occurred during cancellation.'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class CreateRequestView(APIView):
+    """
+    Allows a user to submit a request to either cancel or change the date of their reservation.
+    """
+
+    @method_decorator(csrf_exempt)
+    @method_decorator(token_required)
+    def post(self, request, reservation_id):
+        """
+        Creates a new request for a specific reservation based on the existing 'requests' table schema.
+
+        The user must own the reservation, and it must be in 'RESERVED' status.
+        The request subject can be 'CANCEL' or 'CHANGE_DATE'. A text for the request must also be provided.
+        The penalty calculation for cancellation by an admin will be based on the
+        'date_and_time' this request is created.
+
+        Path Parameter:
+            reservation_id (int): The ID of the reservation to create a request for.
+
+        Request Body (JSON):
+        {
+            "request_subject": "CANCEL", // or "CHANGE_DATE"
+            "request_text": "I need to cancel this trip due to a family emergency."
+        }
+
+        Successful Response (JSON - Status Code: 201 Created):
+        {
+            "status": "success",
+            "message": "Your request has been submitted successfully and is pending review.",
+            "request_details": {
+                "request_id": 1,
+                "reservation_id": 101,
+                "request_subject": "CANCEL",
+                "request_text": "I need to cancel this trip due to a family emergency."
+            }
+        }
+
+        Error Responses (JSON):
+        - 400 Bad Request: Invalid or missing parameters in the request body.
+        - 401 Unauthorized: Invalid or missing token.
+        - 403 Forbidden: User does not own the reservation.
+        - 404 Not Found: The specified reservation does not exist.
+        - 409 Conflict: The reservation is not in a cancellable state, or departure has passed.
+        """
+        current_username = request.user_payload.get('sub')
+
+        try:
+
+            data = request.data
+            request_subject = data.get('request_subject')
+            request_text = data.get('request_text')
+
+            if not all([request_subject, request_text]):
+                return Response(
+                    {'status': 'error', 'message': "Both 'request_subject' and 'request_text' are required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            request_subject_upper = request_subject.upper()
+            if request_subject_upper not in ['CANCEL', 'CHANGE_DATE']:
+                return Response(
+                    {'status': 'error', 'message': "Invalid 'request_subject'. Must be 'CANCEL' or 'CHANGE_DATE'."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    query = """
+                        SELECT r.username, r.reservation_status, t.departure_start
+                        FROM reservations r
+                        JOIN tickets t ON r.ticket_id = t.ticket_id
+                        WHERE r.reservation_id = %s FOR UPDATE OF r;
+                    """
+                    cursor.execute(query, [reservation_id])
+                    reservation_info = cursor.fetchone()
+
+                    if not reservation_info:
+                        return Response({'status': 'error', 'message': 'Reservation not found.'},
+                                        status=status.HTTP_404_NOT_FOUND)
+
+                    res_username, res_status, departure_start = reservation_info
+
+                    if res_username != current_username:
+                        return Response({'status': 'error', 'message': 'Forbidden: You do not own this reservation.'},
+                                        status=status.HTTP_403_FORBIDDEN)
+
+                    if res_status != 'RESERVED':
+                        return Response({'status': 'error',
+                                         'message': f'Cannot create a request for this reservation. Current status is {res_status}.'},
+                                        status=status.HTTP_409_CONFLICT)
+
+                    if departure_start <= datetime.now():
+                        return Response({'status': 'error',
+                                         'message': 'Cannot create a request for a ticket whose departure time has passed.'},
+                                        status=status.HTTP_409_CONFLICT)
+
+                    insert_query = """
+                        INSERT INTO requests (reservation_id, username, request_subject, request_text)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING request_id;
+                    """
+                    cursor.execute(insert_query,
+                                   [reservation_id, current_username, request_subject_upper, request_text])
+                    new_request_id = cursor.fetchone()[0]
+
+            return Response({
+                'status': 'success',
+                'message': 'Your request has been submitted successfully and is pending review.',
+                'request_details': {
+                    'request_id': new_request_id,
+                    'reservation_id': reservation_id,
+                    'request_subject': request_subject_upper,
+                    'request_text': request_text
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except IntegrityError as e:
+            print(f"IntegrityError in CreateRequestView: {e}")
+            return Response(
+                {'status': 'error', 'message': 'A data integrity conflict occurred. The reservation might not exist.'},
+                status=status.HTTP_409_CONFLICT)
+        except Exception as e:
+            print(f"Error in CreateRequestView: {e}")
+            return Response({'status': 'error', 'message': 'An unexpected error occurred.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
