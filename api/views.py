@@ -798,7 +798,6 @@ def update_user_profile_view(request):
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
 
-
 @csrf_exempt
 @require_http_methods(["GET"])
 def get_cities_list_view(request):
@@ -1786,6 +1785,7 @@ class CancelReservationView(APIView):
             return Response({'status': 'error', 'message': 'An unexpected error occurred during cancellation.'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
 class CreateRequestView(APIView):
     """
     Allows a user to submit a request to either cancel or change the date of their reservation.
@@ -2248,3 +2248,125 @@ def pay_ticket_view(request):
     except Exception as e:
         print(f"Unexpected error in pay_for_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def admin_cancelled_reservations_view(request):
+    """
+    Retrieves a list of canceled reservations, with optional filters sent in the request body.
+
+    This endpoint is restricted to admin users only. It allows filtering
+    the results based on 'username' and 'ticket_id' provided in the POST request body.
+    The results are ordered by the cancellation date in descending order.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token_of_an_admin>
+
+    Request Body (JSON - all fields are optional):
+    {
+        "username": "user123",      // Optional: Filters for a specific user.
+        "ticket_id": 45             // Optional: Filters for a specific ticket.
+    }
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "count": 1,
+        "data": [
+            {
+                "reservation_history_id": 1,
+                "cancellation_time": "YYYY-MM-DDTHH:MM:SSZ",
+                "canceled_by_user": "user123",
+                "ticket_id": 45,
+                "reservation_id": 101,
+                "departure_start": "YYYY-MM-DDTHH:MM:SSZ"
+            }
+            // ... more canceled reservations
+        ]
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid JSON or if 'ticket_id' is not a valid integer.
+    - 401 Unauthorized: Token is missing or invalid.
+    - 403 Forbidden: The authenticated user is not an admin.
+    - 500 Internal Server Error: A database or unexpected server error occurred.
+    """
+
+    if request.user_payload.get('role') != 'ADMIN':
+        return JsonResponse(
+            {'status': 'error', 'message': 'Forbidden: This action is restricted to admin users.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    try:
+        try:
+            data = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        username_filter = data.get('username')
+        ticket_id_filter = data.get('ticket_id')
+
+
+        query = """
+            SELECT
+                rh.reservation_history_id,
+                rh.date_and_time AS cancellation_time,
+                rh.username AS canceled_by_user,
+                r.ticket_id,
+                rh.reservation_id,
+                t.departure_start
+            FROM reservations_history rh
+            JOIN reservations r ON rh.reservation_id = r.reservation_id
+            JOIN tickets t ON r.ticket_id = t.ticket_id
+            WHERE
+                rh.operation_type = 'CANCEL'
+        """
+        params = []
+
+        if username_filter:
+            query += " AND rh.username = %s"
+            params.append(username_filter)
+
+        if ticket_id_filter is not None:
+            try:
+                ticket_id_int = int(ticket_id_filter)
+                query += " AND r.ticket_id = %s"
+                params.append(ticket_id_int)
+            except (ValueError, TypeError):
+                return JsonResponse(
+                    {'status': 'error', 'message': "Invalid 'ticket_id' format. Must be an integer."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        query += " ORDER BY rh.date_and_time DESC;"
+
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            canceled_reservations = []
+            for row in rows:
+                reservation_dict = dict(zip(columns, row))
+                if reservation_dict.get('cancellation_time') and hasattr(reservation_dict['cancellation_time'],
+                                                                         'isoformat'):
+                    reservation_dict['cancellation_time'] = reservation_dict['cancellation_time'].isoformat()
+                if reservation_dict.get('departure_start') and hasattr(reservation_dict['departure_start'],
+                                                                       'isoformat'):
+                    reservation_dict['departure_start'] = reservation_dict['departure_start'].isoformat()
+                canceled_reservations.append(reservation_dict)
+
+        return JsonResponse({
+            'status': 'success',
+            'count': len(canceled_reservations),
+            'data': canceled_reservations
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        print(f"Error in admin_cancelled_reservations_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
