@@ -2492,6 +2492,9 @@ def admin_approve_request_view(request, request_id):
     """
     Approves and processes a user request (e.g., for cancellation).
 
+    This endpoint verifies that the ticket's departure time has not already passed
+    at the moment of approval before processing the request.
+
     This endpoint is for admin use only. It processes a specific user request
     identified by its ID. All database operations are performed within a single
     atomic transaction to ensure data integrity.
@@ -2555,6 +2558,17 @@ def admin_approve_request_view(request, request_id):
                                          'message': f"This request has already been processed (Accepted: {data_dict.get('is_accepted', 'N/A')})."},
                                         status=409)
 
+                departure_start_time = data_dict['departure_start']
+                if departure_start_time <= datetime.now():
+                    cursor.execute(
+                        "UPDATE requests SET is_checked = TRUE, is_accepted = FALSE, check_by = %s WHERE request_id = %s;",
+                        [admin_username, request_id])
+                    return JsonResponse(
+                        {'status': 'error',
+                         'message': 'Cannot approve request: The departure time for this ticket has already passed. The request has been automatically rejected.'},
+                        status=409
+                    )
+
                 message = ""
                 if data_dict['request_subject'] == 'CANCEL':
                     time_to_departure = data_dict['departure_start'] - data_dict['requested_at']
@@ -2574,8 +2588,12 @@ def admin_approve_request_view(request, request_id):
                         "UPDATE tickets SET remaining_capacity = remaining_capacity + 1 WHERE ticket_id = %s;",
                         [data_dict['ticket_id']])
                     cursor.execute(
-                        "INSERT INTO reservations_history (username, reservation_id, operation_type, reservation_history_status, cancel_by) VALUES (%s, %s, 'CANCEL', 'CANCELED', %s);",
-                        [data_dict['user_username'], data_dict['reservation_id'], admin_username])
+                        """
+                        INSERT INTO reservations_history (username, reservation_id, operation_type, cancel_by)
+                        VALUES (%s, %s, 'CANCEL', %s);
+                        """,
+                        [data_dict['user_username'], data_dict['reservation_id'], admin_username]
+                    )
 
                     message = f"Cancellation approved. {int(refund_amount)} has been refunded to the user's wallet."
 

@@ -115,7 +115,8 @@ CREATE TABLE reports
     reservation_id INTEGER REFERENCES reservations (reservation_id) ON UPDATE CASCADE NOT NULL,
     report_type    report_type                                                        NOT NULL,
     report_text    TEXT                                                               NOT NULL,
-    report_status  report_status                                                      NOT NULL DEFAULT 'UNCHECKED'
+    report_status  report_status                                                      NOT NULL DEFAULT 'UNCHECKED',
+    admin_response TEXT
 );
 
 CREATE TYPE operation_type As ENUM ('BUY', 'CANCEL');
