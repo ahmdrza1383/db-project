@@ -14,6 +14,9 @@ import json
 import random
 import string
 import re
+from rest_framework.decorators import api_view
+from datetime import datetime
+import json
 
 from .auth_utils import *
 from .tasks import expire_reservation
@@ -2671,4 +2674,307 @@ def admin_reject_request_view(request, request_id):
     except Exception as e:
         print(f"Error in admin_reject_request_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred during rejection.'},
+                            status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def get_user_bookings_view(request):
+    """
+    Retrieves a list of authenticated user's bookings with optional filters.
+
+    This API allows an authenticated 'USER' to fetch their ticket reservations.
+    Admins are forbidden from using this endpoint.
+    It supports filtering by reservation status (e.g., 'RESERVED', 'CANCELED'),
+    by a date range for the ticket's departure date, and by origin/destination cities.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token>
+
+    Request Body (JSON - all fields are optional):
+    {
+        "reservation_status": "RESERVED",
+        "start_departure_date": "YYYY-MM-DD",
+        "end_departure_date": "YYYY-MM-DD",
+        "origin_city": "Tehran",
+        "destination_city": "Mashhad"
+    }
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "count": 2,
+        "data": [
+            {
+                "reservation_id": 101,
+                "ticket_id": 123,
+                "reservation_status": "RESERVED",
+                "reserved_at": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
+                "reservation_seat": 5,
+                "ticket_details": {
+                    "origin_city": "Tehran",
+                    "destination_city": "Mashhad",
+                    "departure_start": "YYYY-MM-DDTHH:MM:SS",
+                    "departure_end": "YYYY-MM-DDTHH:MM:SS",
+                    "price": 500000,
+                    "vehicle_type": "FLIGHT",
+                    "airline_name": "Mahan Air",
+                    "vehicle_details": { ... }
+                },
+                "payment_info": {
+                    "amount_paid": 500000,
+                    "payment_status": "SUCCESSFUL",
+                    "payment_method": "CREDIT_CARD",
+                    "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+                },
+                "history_info": [
+                    {
+                        "operation_type": "BUY",
+                        "history_status": "SUCCESSFUL",
+                        "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+                    }
+                ]
+            }
+            // ... more bookings
+        ]
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid JSON, invalid date format, invalid reservation_status, invalid city names.
+    - 401 Unauthorized: Token missing or invalid.
+    - 403 Forbidden: User is an admin (only regular users can access).
+    - 500 Internal Server Error: Database or unexpected server errors.
+    """
+    current_username = request.user_payload.get('sub')
+    user_role = request.user_payload.get('role')
+
+    if not current_username:
+        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username missing.'}, status=401)
+
+    if user_role != 'USER':
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Forbidden: Only regular users can view their bookings.'
+        }, status=403)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+
+    filter_status = data.get('reservation_status')
+    start_date_str = data.get('start_departure_date')
+    end_date_str = data.get('end_departure_date')
+    origin_city = data.get('origin_city')
+    destination_city = data.get('destination_city')
+
+    if filter_status and filter_status.upper() not in ['RESERVED', 'NOT_RESERVED', 'TEMPORARY', 'CANCELED']:
+        return JsonResponse({'status': 'error', 'message': 'Invalid reservation_status provided.'}, status=400)
+
+    start_date = None
+    if start_date_str:
+        try:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return JsonResponse(
+                {'status': 'error', 'message': 'Invalid start_departure_date format. Please use YYYY-MM-DD.'},
+                status=400
+            )
+
+    end_date = None
+    if end_date_str:
+        try:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return JsonResponse(
+                {'status': 'error', 'message': 'Invalid end_departure_date format. Please use YYYY-MM-DD.'},
+                status=400
+            )
+
+    query = """
+        SELECT
+            r.reservation_id,
+            r.ticket_id,
+            r.reservation_status,
+            r.date_and_time_of_reservation AS reserved_at,
+            r.reservation_seat,
+            t.departure_start,
+            t.departure_end,
+            t.price,
+            v.vehicle_type,
+            loc_origin.city AS origin_city,
+            loc_dest.city AS destination_city,
+            f.airline_name, f.flight_class, f.number_of_stop, f.flight_code, f.origin_airport, f.destination_airport, f.facility AS flight_facility,
+            tr.train_stars, tr.choosing_a_closed_coupe, tr.facility AS train_facility,
+            b.company_name, b.bus_type, b.number_of_chairs, b.facility AS bus_facility,
+            p.amount_paid, p.payment_status AS payment_current_status, p.payment_method, p.date_and_time_of_payment,
+            rh.operation_type AS history_operation_type, rh.buy_status AS history_buy_status, rh.date_and_time AS history_date_and_time
+        FROM reservations r
+        JOIN tickets t ON r.ticket_id = t.ticket_id
+        JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+        JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
+        JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+        LEFT JOIN flights f ON v.vehicle_id = f.vehicle_id AND v.vehicle_type = 'FLIGHT'
+        LEFT JOIN trains tr ON v.vehicle_id = tr.vehicle_id AND v.vehicle_type = 'TRAIN'
+        LEFT JOIN buses b ON v.vehicle_id = b.vehicle_id AND v.vehicle_type = 'BUS'
+        LEFT JOIN payments p ON r.reservation_id = p.reservation_id AND p.payment_status = 'SUCCESSFUL'
+        LEFT JOIN (
+            SELECT
+                rh_inner.reservation_id,
+                rh_inner.operation_type,
+                rh_inner.buy_status,
+                rh_inner.date_and_time,
+                ROW_NUMBER() OVER (PARTITION BY rh_inner.reservation_id ORDER BY rh_inner.date_and_time DESC) as rn
+            FROM reservations_history rh_inner
+        ) rh ON r.reservation_id = rh.reservation_id AND rh.rn = 1
+        WHERE r.username = %s
+    """
+    params = [current_username]
+
+    if filter_status:
+        if filter_status.upper() == 'CANCELED':
+            query += " AND rh.operation_type = 'CANCEL' AND rh.buy_status = 'CANCELED'"
+        else:
+            query += " AND r.reservation_status = %s"
+            params.append(filter_status.upper())
+
+    if start_date:
+        query += " AND DATE(t.departure_start) >= %s"
+        params.append(start_date)
+
+    if end_date:
+        query += " AND DATE(t.departure_start) <= %s"
+        params.append(end_date)
+
+    if origin_city:
+        query += " AND loc_origin.city ILIKE %s"
+        params.append(f"%{origin_city}%")
+
+    if destination_city:
+        query += " AND loc_dest.city ILIKE %s"
+        params.append(f"%{destination_city}%")
+
+    query += " ORDER BY t.departure_start DESC, r.date_and_time_of_reservation DESC;"
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            user_bookings = []
+            for row in rows:
+                booking = dict(zip(columns, row))
+
+                for key in ['reserved_at', 'departure_start', 'departure_end', 'date_and_time_of_payment',
+                            'history_date_and_time']:
+                    if booking.get(key) and hasattr(booking[key], 'isoformat'):
+                        booking[key] = booking[key].isoformat()
+
+                vehicle_details = {}
+                current_vehicle_type = booking.pop('vehicle_type')
+
+                if current_vehicle_type == 'FLIGHT':
+                    vehicle_details['airline_name'] = booking.pop('airline_name')
+                    vehicle_details['flight_class'] = booking.pop('flight_class')
+                    vehicle_details['number_of_stop'] = booking.pop('number_of_stop')
+                    vehicle_details['flight_code'] = booking.pop('flight_code')
+                    vehicle_details['origin_airport'] = booking.pop('origin_airport')
+                    vehicle_details['destination_airport'] = booking.pop('destination_airport')
+                    facility_json = booking.pop('flight_facility')
+                    if facility_json:
+                        try:
+                            vehicle_details['facility'] = json.loads(facility_json)
+                        except json.JSONDecodeError:
+                            vehicle_details['facility'] = None
+                    else:
+                        vehicle_details['facility'] = None
+
+                elif current_vehicle_type == 'TRAIN':
+                    vehicle_details['train_stars'] = booking.pop('train_stars')
+                    vehicle_details['choosing_a_closed_coupe'] = booking.pop('choosing_a_closed_coupe')
+                    facility_json = booking.pop('train_facility')
+                    if facility_json:
+                        try:
+                            vehicle_details['facility'] = json.loads(facility_json)
+                        except json.JSONDecodeError:
+                            vehicle_details['facility'] = None
+                    else:
+                        vehicle_details['facility'] = None
+
+                elif current_vehicle_type == 'BUS':
+                    vehicle_details['company_name'] = booking.pop('company_name')
+                    vehicle_details['bus_type'] = booking.pop('bus_type')
+                    vehicle_details['number_of_chairs'] = booking.pop('number_of_chairs')
+                    facility_json = booking.pop('bus_facility')
+                    if facility_json:
+                        try:
+                            vehicle_details['facility'] = json.loads(facility_json)
+                        except json.JSONDecodeError:
+                            vehicle_details['facility'] = None
+                    else:
+                        vehicle_details['facility'] = None
+
+                for key_to_remove in ['airline_name', 'flight_class', 'number_of_stop', 'flight_code', 'origin_airport',
+                                      'destination_airport', 'flight_facility',
+                                      'train_stars', 'choosing_a_closed_coupe', 'train_facility',
+                                      'company_name', 'bus_type', 'number_of_chairs', 'bus_facility']:
+                    booking.pop(key_to_remove, None)
+
+                booking['ticket_details'] = {
+                    'origin_city': booking.pop('origin_city'),
+                    'destination_city': booking.pop('destination_city'),
+                    'departure_start': booking.pop('departure_start'),
+                    'departure_end': booking.pop('departure_end'),
+                    'price': booking.pop('price'),
+                    'vehicle_type': current_vehicle_type,
+                    'vehicle_details': vehicle_details
+                }
+
+                payment_info = {}
+                if booking.get('amount_paid') is not None:
+                    payment_info = {
+                        'amount_paid': booking.pop('amount_paid'),
+                        'payment_status': booking.pop('payment_current_status'),
+                        'payment_method': booking.pop('payment_method'),
+                        'date_and_time_of_payment': booking.pop('date_and_time_of_payment')
+                    }
+                else:
+                    booking.pop('amount_paid', None)
+                    booking.pop('payment_current_status', None)
+                    booking.pop('payment_method', None)
+                    booking.pop('date_and_time_of_payment', None)
+
+                booking['payment_info'] = payment_info
+
+                history_info = {}
+                if booking.get('history_operation_type') is not None:
+                    history_info = {
+                        'operation_type': booking.pop('history_operation_type'),
+                        'history_status': booking.pop('history_buy_status'),
+                        'date_and_time': booking.pop('history_date_and_time')
+                    }
+                else:
+                    booking.pop('history_operation_type', None)
+                    booking.pop('history_buy_status', None)
+                    booking.pop('history_date_and_time', None)
+
+                booking['history_info'] = history_info
+
+                user_bookings.append(booking)
+
+        return JsonResponse({
+            'status': 'success',
+            'count': len(user_bookings),
+            'data': user_bookings
+        }, status=200)
+
+    except DatabaseError as e:
+        print(f"DatabaseError in get_user_bookings_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while fetching bookings.'},
+                            status=500)
+    except Exception as e:
+        print(f"Unexpected error in get_user_bookings_view: {e.__class__.__name__}: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
                             status=500)

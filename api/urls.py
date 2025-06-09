@@ -20,4 +20,5 @@ urlpatterns = [
     path('admin/requests/', views.admin_request_list_view, name='admin_request_list'),
     path('admin/requests/<int:request_id>/approve/', views.admin_approve_request_view, name='admin_approve_request'),
     path('admin/requests/<int:request_id>/reject/', views.admin_reject_request_view, name='admin_reject_request'),
+    path('user-bookings/', views.get_user_bookings_view, name='user-bookings'),
 ]
