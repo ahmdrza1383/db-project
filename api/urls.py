@@ -17,4 +17,7 @@ urlpatterns = [
     path('reservations/<int:reservation_id>/requests/', views.CreateRequestView.as_view(), name='create_request'),
     path('pay-tickets/', views.pay_ticket_view, name='pay-ticket'),
     path('admin/cancelled-reservations/', views.admin_cancelled_reservations_view, name='admin_cancelled_reservations'),
+    path('admin/requests/', views.admin_request_list_view, name='admin_request_list'),
+    path('admin/requests/<int:request_id>/approve/', views.admin_approve_request_view, name='admin_approve_request'),
+    path('admin/requests/<int:request_id>/reject/', views.admin_reject_request_view, name='admin_reject_request'),
 ]

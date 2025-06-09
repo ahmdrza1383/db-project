@@ -2305,11 +2305,10 @@ def admin_cancelled_reservations_view(request):
             data = json.loads(request.body) if request.body else {}
         except json.JSONDecodeError:
             return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+                                status=status.HTTP_400_BAD_REQUEST)
 
         username_filter = data.get('username')
         ticket_id_filter = data.get('ticket_id')
-
 
         query = """
             SELECT
@@ -2369,4 +2368,289 @@ def admin_cancelled_reservations_view(request):
     except Exception as e:
         print(f"Error in admin_cancelled_reservations_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def admin_request_list_view(request):
+    """
+    Retrieves a list of user requests, with optional filters sent in the POST request body.
+
+    This endpoint is restricted to admin users only. It allows filtering
+    the results based on 'username', 'ticket_id', and 'status' provided in the
+    POST request body. The results are ordered by the request creation date in
+    descending order.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token_of_an_admin>
+
+    Request Body (JSON - all fields are optional):
+    {
+        "username": "user123",      // Optional: Filters for a specific user.
+        "ticket_id": 45,            // Optional: Filters for requests related to a specific ticket.
+        "status": "PENDING"         // Optional: Filters by request status ('PENDING', 'APPROVED', 'REJECTED').
+    }
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "count": 1,
+        "data": [
+            {
+                "request_id": 1,
+                "username": "user123",
+                "reservation_id": 101,
+                "ticket_id": 45,
+                "request_subject": "CANCEL",
+                "request_text": "I need to cancel this trip.",
+                "requested_at": "YYYY-MM-DDTHH:MM:SSZ",
+                "is_checked": false,
+                "is_accepted": false
+            }
+            // ... more requests
+        ]
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid JSON or if 'ticket_id' is not a valid integer.
+    - 401 Unauthorized: Token is missing or invalid.
+    - 403 Forbidden: The authenticated user is not an admin.
+    - 500 Internal Server Error: A database or unexpected server error occurred.
+    """
+    if request.user_payload.get('role') != 'ADMIN':
+        return JsonResponse(
+            {'status': 'error', 'message': 'Forbidden: This action is restricted to admin users.'},
+            status=403
+        )
+
+    try:
+        try:
+            data = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+
+        username_filter = data.get('username')
+        ticket_id_filter = data.get('ticket_id')
+        status_filter = data.get('status')
+
+        query = """
+            SELECT
+                req.request_id, req.username, req.reservation_id, res.ticket_id,
+                req.request_subject, req.request_text, req.date_and_time AS requested_at,
+                req.is_checked, req.is_accepted
+            FROM requests req
+            JOIN reservations res ON req.reservation_id = res.reservation_id
+            WHERE 1=1
+        """
+        params = []
+
+        if username_filter:
+            query += " AND req.username = %s"
+            params.append(username_filter)
+
+        if ticket_id_filter is not None:
+            try:
+                query += " AND res.ticket_id = %s"
+                params.append(int(ticket_id_filter))
+            except (ValueError, TypeError):
+                return JsonResponse({'status': 'error', 'message': 'ticket_id must be an integer.'}, status=400)
+
+        if status_filter and status_filter.upper() in ['PENDING', 'APPROVED', 'REJECTED']:
+            if status_filter.upper() == 'PENDING':
+                query += " AND req.is_checked = FALSE"
+            elif status_filter.upper() == 'APPROVED':
+                query += " AND req.is_checked = TRUE AND req.is_accepted = TRUE"
+            elif status_filter.upper() == 'REJECTED':
+                query += " AND req.is_checked = TRUE AND req.is_accepted = FALSE"
+
+        query += " ORDER BY req.date_and_time DESC;"
+
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+            requests_list = []
+            for row in rows:
+                req_dict = dict(zip(columns, row))
+                if req_dict.get('requested_at'):
+                    req_dict['requested_at'] = req_dict['requested_at'].isoformat()
+                requests_list.append(req_dict)
+
+        return JsonResponse({'status': 'success', 'count': len(requests_list), 'data': requests_list})
+
+    except Exception as e:
+        print(f"Error in admin_request_list_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def admin_approve_request_view(request, request_id):
+    """
+    Approves and processes a user request (e.g., for cancellation).
+
+    This endpoint is for admin use only. It processes a specific user request
+    identified by its ID. All database operations are performed within a single
+    atomic transaction to ensure data integrity.
+
+    If the request is for 'CANCEL', it calculates the penalty based on the time
+    the user submitted the request, refunds the appropriate amount to the user's
+    wallet, frees up the reserved seat, and logs the action in the history.
+    The logic for 'CHANGE_DATE' requests should also be handled here if implemented.
+
+    Path Parameter:
+        request_id (int): The unique identifier for the request to be approved.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token_of_an_admin>
+
+    Request Body:
+        An empty body is expected.
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "message": "Cancellation approved. 450000 has been refunded to the user's wallet."
+    }
+
+    Error Responses (JSON):
+    - 401 Unauthorized: Token is missing or invalid.
+    - 403 Forbidden: The authenticated user is not an admin.
+    - 404 Not Found: Request with the given ID does not exist.
+    - 409 Conflict: The request has already been processed.
+    - 500 Internal Server Error: A database or unexpected server error occurred during approval.
+    """
+    admin_username = request.user_payload.get('sub')
+    if request.user_payload.get('role') != 'ADMIN':
+        return JsonResponse({'status': 'error', 'message': 'Forbidden: Admin access required.'}, status=403)
+
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT
+                        req.request_id, req.request_subject, req.date_and_time AS requested_at,
+                        req.is_checked, res.reservation_id, res.ticket_id, 
+                        res.username AS user_username, t.departure_start, t.price, u.wallet_balance
+                    FROM requests req
+                    JOIN reservations res ON req.reservation_id = res.reservation_id
+                    JOIN tickets t ON res.ticket_id = t.ticket_id
+                    JOIN users u ON res.username = u.username
+                    WHERE req.request_id = %s FOR UPDATE OF req, res, t, u;
+                """
+                cursor.execute(query, [request_id])
+                request_data = cursor.fetchone()
+
+                if not request_data:
+                    return JsonResponse({'status': 'error', 'message': 'Request not found.'}, status=404)
+
+                columns = [col[0] for col in cursor.description]
+                data_dict = dict(zip(columns, request_data))
+
+                if data_dict['is_checked']:
+                    return JsonResponse({'status': 'error',
+                                         'message': f"This request has already been processed (Accepted: {data_dict.get('is_accepted', 'N/A')})."},
+                                        status=409)
+
+                message = ""
+                if data_dict['request_subject'] == 'CANCEL':
+                    time_to_departure = data_dict['departure_start'] - data_dict['requested_at']
+                    time_remaining_hours = time_to_departure.total_seconds() / 3600
+
+                    penalty_percentage = 10 if time_remaining_hours > 1 else 50
+                    penalty_amount = (data_dict['price'] * penalty_percentage) / 100
+                    refund_amount = data_dict['price'] - penalty_amount
+
+                    new_wallet_balance = data_dict['wallet_balance'] + refund_amount
+                    cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
+                                   [new_wallet_balance, data_dict['user_username']])
+                    cursor.execute(
+                        "UPDATE reservations SET reservation_status = 'NOT_RESERVED', username = NULL, date_and_time_of_reservation = NULL WHERE reservation_id = %s;",
+                        [data_dict['reservation_id']])
+                    cursor.execute(
+                        "UPDATE tickets SET remaining_capacity = remaining_capacity + 1 WHERE ticket_id = %s;",
+                        [data_dict['ticket_id']])
+                    cursor.execute(
+                        "INSERT INTO reservations_history (username, reservation_id, operation_type, reservation_history_status, cancel_by) VALUES (%s, %s, 'CANCEL', 'CANCELED', %s);",
+                        [data_dict['user_username'], data_dict['reservation_id'], admin_username])
+
+                    message = f"Cancellation approved. {int(refund_amount)} has been refunded to the user's wallet."
+
+                elif data_dict['request_subject'] == 'CHANGE_DATE':
+                    # TODO: Implement complex logic for changing date
+                    message = "Change Date request approved. (Change date logic needs full implementation)."
+
+                cursor.execute(
+                    "UPDATE requests SET is_checked = TRUE, is_accepted = TRUE, check_by = %s WHERE request_id = %s;",
+                    [admin_username, request_id])
+
+        return JsonResponse({'status': 'success', 'message': message})
+
+    except Exception as e:
+        print(f"Error in admin_approve_request_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred during approval.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def admin_reject_request_view(request, request_id):
+    """
+    Rejects a pending user request.
+
+    This endpoint is for admin use only. It marks a specific user request
+    as checked and not accepted. This is a final action and cannot be undone
+    via this API. The operation is performed within an atomic transaction.
+
+    Path Parameter:
+        request_id (int): The unique identifier for the request to be rejected.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token_of_an_admin>
+
+    Request Body:
+        An empty body is expected.
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "message": "Request has been rejected."
+    }
+
+    Error Responses (JSON):
+    - 401 Unauthorized: Token is missing or invalid.
+    - 403 Forbidden: The authenticated user is not an admin.
+    - 404 Not Found: Request with the given ID does not exist.
+    - 409 Conflict: The request has already been processed.
+    - 500 Internal Server Error: A database or unexpected server error occurred during rejection.
+    """
+    admin_username = request.user_payload.get('sub')
+    if request.user_payload.get('role') != 'ADMIN':
+        return JsonResponse({'status': 'error', 'message': 'Forbidden: Admin access required.'}, status=403)
+
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT is_checked FROM requests WHERE request_id = %s FOR UPDATE;", [request_id])
+                req_status = cursor.fetchone()
+
+                if not req_status:
+                    return JsonResponse({'status': 'error', 'message': 'Request not found.'}, status=404)
+
+                if req_status[0]:  # is_checked
+                    return JsonResponse({'status': 'error', 'message': 'This request has already been processed.'},
+                                        status=409)
+
+                cursor.execute(
+                    "UPDATE requests SET is_checked = TRUE, is_accepted = FALSE, check_by = %s WHERE request_id = %s;",
+                    [admin_username, request_id])
+
+        return JsonResponse({'status': 'success', 'message': 'Request has been rejected.'})
+
+    except Exception as e:
+        print(f"Error in admin_reject_request_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred during rejection.'},
+                            status=500)
