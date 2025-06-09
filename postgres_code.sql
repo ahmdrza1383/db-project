@@ -92,18 +92,17 @@ CREATE TABLE reservations
     reservation_seat             INTEGER CHECK (reservation_seat > 0)                     NOT NULL
 );
 
-CREATE TYPE payment_status As ENUM ('PAID', 'NOT_PAID', 'WAITING');
-CREATE TYPE payment_method As ENUM ('CRYPTOCURRENCY', 'WALLET', 'CREDIT_CARD');
+CREATE TYPE payment_status AS ENUM ('SUCCESSFUL', 'UNSUCCESSFUL');
+CREATE TYPE payment_method AS ENUM ('CRYPTOCURRENCY', 'WALLET', 'CREDIT_CARD');
 
-CREATE TABLE payments
-(
-    payment_id               SERIAL PRIMARY KEY,
-    username                 VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE          NOT NULL,
-    reservation_id           INTEGER REFERENCES reservations (reservation_id) ON UPDATE CASCADE NOT NULL,
-    amount_paid              INTEGER CHECK (amount_paid > 0)                                    NOT NULL,
-    payment_status           payment_status                                                     NOT NULL DEFAULT 'NOT_PAID',
-    date_and_time_of_payment TIMESTAMP                                                                   DEFAULT CURRENT_TIMESTAMP,
-    payment_method           payment_method                                                     NOT NULL DEFAULT 'CREDIT_CARD'
+CREATE TABLE payments (
+    payment_id SERIAL PRIMARY KEY,
+    username VARCHAR(50) REFERENCES users (username) ON UPDATE CASCADE NOT NULL,
+    reservation_id INTEGER REFERENCES reservations (reservation_id) ON UPDATE CASCADE NOT NULL,
+    amount_paid INTEGER CHECK (amount_paid > 0) NOT NULL,
+    payment_status payment_status NOT NULL DEFAULT 'UNSUCCESSFUL',
+    date_and_time_of_payment TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    payment_method payment_method NOT NULL DEFAULT 'CREDIT_CARD'
 );
 
 CREATE TYPE report_type As ENUM ('PAYMENT', 'TRAVEL_DELAY', 'CANCEL', 'OTHER');

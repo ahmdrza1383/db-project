@@ -911,7 +911,7 @@ VALUES
 ('sara456', 100, '2025-05-23 08:15:00', 'BUY');
 
 update reservations_history
-set "reservation_history_status" = 'SUCCESSFUL';
+set "buy_status" = 'SUCCESSFUL';
 
 
 -- افزودن 30 گزارش
@@ -1008,7 +1008,7 @@ VALUES ('mehdi2121', 101, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD')
        ('elnaz2828', 106, 3000000, 'PAID', '2025-04-09 02:05:00', 'CREDIT_CARD'),
        ('golnaz3434', 107, 3000000, 'PAID', '2025-04-09 23:01:00', 'CREDIT_CARD');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
 VALUES ('mehdi2121', 101, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
        ('mehdi2121', 102, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
        ('mehdi2121', 103, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
@@ -1023,7 +1023,7 @@ INSERT INTO payments (username, reservation_id, amount_paid, payment_status, dat
 VALUES
     ('parvaneh4040', 108, 3000000, 'PAID', '2024-04-06 12:00:00', 'WALLET');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
 VALUES ('parvaneh4040', 108, '2024-04-06 12:00:00', 'BUY', 'SUCCESSFUL'),
        ('parvaneh4040', 108, '2024-04-06 12:10:00', 'CANCEL', 'CANCELED');
 
@@ -1040,7 +1040,7 @@ values ('mehdi2121', 101, 'CANCEL', 'test', TRUE, FALSE, 'admin1'),
        ('narges2222', 105, 'CANCEL', 'test', TRUE, FALSE, 'admin2'),
        ('narges2222', 109, 'CANCEL', 'test', TRUE, TRUE, 'admin1');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
 VALUES ('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'CANCELED'),
        ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'CANCELED');
 

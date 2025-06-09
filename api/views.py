@@ -1380,7 +1380,7 @@ def reserve_ticket_view(request):
     Admins are not allowed to reserve tickets via this endpoint.
     Upon successful temporary reservation, a Celery task is scheduled to check
     for reservation expiry after a defined period (e.g., 10 minutes).
-    Also, the temporary reservation details are cached in Redis for 10 minutes.
+    Also, the temporary reservation details (including ticket_price) are cached in Redis for 10 minutes.
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
@@ -1442,20 +1442,20 @@ def reserve_ticket_view(request):
 
         reservation_outcome_details = None
         reservation_id_to_monitor = None
-        expiry_minutes_setting = getattr(settings, 'RESERVATION_EXPIRY_MINUTES', 10)  # از settings خوانده شود
+        expiry_minutes_setting = getattr(settings, 'RESERVATION_EXPIRY_MINUTES', 10)
 
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT remaining_capacity, ticket_status FROM tickets WHERE ticket_id = %s FOR UPDATE;",
+                    "SELECT remaining_capacity, ticket_status, price FROM tickets WHERE ticket_id = %s FOR UPDATE;",
                     [ticket_id]
                 )
-                ticket_status_info = cursor.fetchone()
+                ticket_info = cursor.fetchone()
 
-                if not ticket_status_info:
+                if not ticket_info:
                     raise Http404(f"Ticket with ID {ticket_id} not found.")
 
-                current_remaining_capacity, ticket_is_active = ticket_status_info
+                current_remaining_capacity, ticket_is_active, ticket_price_from_db = ticket_info
 
                 if not ticket_is_active:
                     return JsonResponse({'status': 'error', 'message': f'Ticket ID {ticket_id} is currently inactive.'},
@@ -1540,6 +1540,7 @@ def reserve_ticket_view(request):
 
                 reservation_for_cache = reservation_outcome_details.copy()
                 reservation_for_cache['expires_in_minutes'] = expiry_minutes_setting
+                reservation_for_cache['ticket_price'] = ticket_price_from_db
 
                 try:
                     redis_client.setex(
@@ -1548,7 +1549,7 @@ def reserve_ticket_view(request):
                         json.dumps(reservation_for_cache)
                     )
                     print(
-                        f"Temporary reservation {reservation_id_to_monitor} cached in Redis for {expiry_minutes_setting} minutes.")
+                        f"Temporary reservation {reservation_id_to_monitor} cached in Redis for {expiry_minutes_setting} minutes with price {ticket_price_from_db}.")
                 except redis.exceptions.RedisError as re_cache_err:
                     print(f"Redis error during temporary reservation caching: {re_cache_err}")
                 except Exception as e:
@@ -1911,3 +1912,339 @@ class CreateRequestView(APIView):
             return Response({'status': 'error', 'message': 'An unexpected error occurred.'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def pay_ticket_view(request):
+    """
+    Handles payment for a temporarily reserved ticket.
+
+    Only regular 'USER' roles are permitted to perform payments. 'ADMIN' roles are forbidden.
+    The system ONLY checks for the temporary reservation in Redis using its reservation_id.
+    If it's not found in Redis, it implies the reservation has expired or was never created,
+    and an error is returned.
+
+    Users can pay using 'WALLET', 'CRYPTOCURRENCY', or 'CREDIT_CARD'.
+    - If `payment_method` is 'WALLET', the system automatically determines
+      if the payment is 'SUCCESSFUL' or 'UNSUCCESSFUL' based on wallet balance.
+      The 'payment_status' field in the request body should NOT be provided for 'WALLET' payments.
+    - If `payment_method` is 'CRYPTOCURRENCY' or 'CREDIT_CARD', the user MUST
+      provide the 'payment_status' (either 'SUCCESSFUL' or 'UNSUCCESSFUL') in the request body.
+      This simulates external payment gateway responses.
+
+    Upon successful payment, the reservation status is confirmed to 'RESERVED',
+    a payment record is created, and a 'BUY' entry is added to reservation history.
+    If payment fails (e.g., insufficient wallet balance or user-provided 'UNSUCCESSFUL' status),
+    the temporary reservation status remains 'TEMPORARY', allowing user to retry payment
+    within the expiry window. The Celery task will eventually revert it if payment is not made.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token>
+
+    Request Body (JSON):
+    {
+        "reservation_id": 101,      // Integer: ID of the temporary reservation to pay for
+        "payment_method": "WALLET", // String: "WALLET", "CRYPTOCURRENCY", or "CREDIT_CARD"
+        "payment_status": "SUCCESSFUL" // Optional: MUST be "SUCCESSFUL" or "UNSUCCESSFUL" for non-WALLET methods
+    }
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "message": "Payment successful. Reservation confirmed.",
+        "payment_details": {
+            "payment_id": 101,
+            "reservation_id": 101,
+            "amount_paid": 500000,
+            "payment_status": "SUCCESSFUL",
+            "payment_method": "WALLET",
+            "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+        },
+        "reservation_history": {
+            "operation_type": "BUY",
+            "history_status": "SUCCESSFUL",
+            "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+        },
+        "new_wallet_balance": 1500000 // Only present if payment_method was WALLET
+    }
+
+    Error Response (JSON - Status Code: 400 Bad Request - e.g., insufficient wallet balance):
+    {
+        "status": "error",
+        "message": "Payment failed: Insufficient wallet balance.",
+        "payment_details": {
+            "payment_id": 102,
+            "reservation_id": 102,
+            "amount_paid": 500000,
+            "payment_status": "UNSUCCESSFUL",
+            "payment_method": "WALLET",
+            "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+        },
+        "reservation_history": {
+            "operation_type": "BUY",
+            "history_status": "UNSUCCESSFUL",
+            "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+        }
+    }
+
+    Error Responses (JSON - other common errors):
+    - 400 Bad Request: Invalid JSON, missing required fields, invalid payment_method,
+                       invalid/missing payment_status for non-wallet methods,
+                       providing payment_status for WALLET method.
+    - 401 Unauthorized: Token missing or invalid.
+    - 403 Forbidden: User role is not 'USER' or reservation does not belong to the user.
+    - 404 Not Found: Temporary reservation not found in Redis for the given reservation_id.
+    - 409 Conflict: Reservation is not in TEMPORARY status (e.g., already paid or reverted by Celery).
+    - 500 Internal Server Error: Database or unexpected server errors.
+    """
+    current_username = request.user_payload.get('sub')
+    user_role = request.user_payload.get('role')
+
+    if not current_username:
+        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username missing.'}, status=401)
+
+    if user_role != 'USER':
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Forbidden: Only regular users can make payments. Admins are not permitted.'
+        }, status=403)
+
+    try:
+        data = json.loads(request.body)
+        reservation_id_input = data.get('reservation_id')  # New: Get reservation_id from body
+        payment_method = data.get('payment_method')
+        user_provided_payment_status = data.get('payment_status')
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
+
+    if not all([reservation_id_input, payment_method]):  # Updated: check for reservation_id
+        return JsonResponse({'status': 'error', 'message': 'Missing required fields: reservation_id, payment_method.'},
+                            status=400)
+
+    try:
+        res_id = int(reservation_id_input)  # Convert reservation_id to int
+    except (ValueError, TypeError):
+        return JsonResponse({'status': 'error', 'message': 'reservation_id must be a valid integer.'}, status=400)
+
+    valid_payment_methods = ['WALLET', 'CRYPTOCURRENCY', 'CREDIT_CARD']
+    if payment_method.upper() not in valid_payment_methods:
+        return JsonResponse(
+            {'status': 'error', 'message': f'Invalid payment_method. Must be one of {valid_payment_methods}.'},
+            status=400)
+
+    payment_method_upper = payment_method.upper()
+    payment_successful_outcome = False
+    transaction_time = datetime.now(timezone.utc)
+
+    payment_details_for_response = {}
+    history_details_for_response = {}
+    new_wallet_balance = None
+
+    actual_ticket_price_for_transaction = None
+
+    if payment_method_upper == 'WALLET':
+        if user_provided_payment_status is not None:
+            return JsonResponse({'status': 'error',
+                                 'message': 'Payment status cannot be provided for WALLET payments. It is determined automatically.'},
+                                status=400)
+    else:  # CRYPTOCURRENCY or CREDIT_CARD
+        if user_provided_payment_status is None:
+            return JsonResponse(
+                {'status': 'error', 'message': f'Payment status is required for {payment_method_upper} payments.'},
+                status=400)
+        user_provided_payment_status_upper = user_provided_payment_status.upper()
+        if user_provided_payment_status_upper not in ['SUCCESSFUL', 'UNSUCCESSFUL']:
+            return JsonResponse(
+                {'status': 'error', 'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
+                status=400)
+
+    # --- START: Logic to find reservation ONLY in Redis using direct key ---
+    if not redis_client:
+        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable.'}, status=503)
+
+    redis_key = f"temp_reservation:{res_id}"  # Direct key construction
+    cached_data_json = redis_client.get(redis_key)
+
+    if not cached_data_json:
+        return JsonResponse({'status': 'error',
+                             'message': 'Temporary reservation not found in Redis or has expired. Please reserve the ticket again.'},
+                            status=404)
+
+    try:
+        cached_reservation_data = json.loads(cached_data_json)
+    except json.JSONDecodeError:
+        print(f"Error parsing Redis data for key {redis_key}: Invalid JSON.")
+        return JsonResponse({'status': 'error', 'message': 'Corrupted temporary reservation data in Redis.'},
+                            status=500)
+
+    # Validate cached data matches current user and basic reservation details
+    if cached_reservation_data.get('username') != current_username:
+        return JsonResponse(
+            {'status': 'error', 'message': 'Forbidden: This temporary reservation does not belong to you.'}, status=403)
+
+    # Also validate ticket_id and seat_number from cached_data against expected values if they were provided in request body.
+    # For now, we only need reservation_id to GET from Redis and trust that the cached data is correct for the user.
+    # If ticket_id and reservation_seat are still provided in body, you could add checks here:
+    # if cached_reservation_data.get('ticket_id') != ticket_id_from_request or cached_reservation_data.get('seat_number') != reservation_seat_from_request:
+    #     return JsonResponse({'status': 'error', 'message': 'Temporary reservation details mismatch.'}, status=400)
+
+    actual_ticket_price_for_transaction = cached_reservation_data.get('ticket_price')
+    if actual_ticket_price_for_transaction is None:
+        print(f"Error: Ticket price not found in Redis cache for reservation {res_id}.")
+        return JsonResponse({'status': 'error',
+                             'message': 'Ticket price missing from temporary reservation data in Redis. Cannot proceed.'},
+                            status=500)
+
+    # --- END: Logic to find reservation ONLY in Redis using direct key ---
+
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                # 1. Fetch current user's wallet balance and current reservation status from DB
+                # This is a crucial consistency check and fetches wallet balance.
+                cursor.execute(
+                    """
+                    SELECT u.wallet_balance, r.reservation_status, r.ticket_id
+                    FROM users u
+                             INNER JOIN reservations r ON u.username = r.username
+                    WHERE u.username = %s
+                      AND r.reservation_id = %s
+                        FOR UPDATE OF u, r;
+                    """,
+                    [current_username, res_id]
+                )
+                user_res_info = cursor.fetchone()
+
+                if not user_res_info:
+                    # This implies data inconsistency or reservation got reverted by Celery very recently
+                    return JsonResponse({'status': 'error',
+                                         'message': 'Reservation not found in DB or its status has changed unexpectedly. Please try again.'},
+                                        status=404)
+
+                current_wallet_balance, current_res_status_db, fetched_ticket_id_db = user_res_info
+
+                if current_res_status_db != 'TEMPORARY':
+                    return JsonResponse({'status': 'error',
+                                         'message': f'Reservation status is {current_res_status_db}. Only TEMPORARY reservations can be paid. It might have expired or been processed.'},
+                                        status=409)
+
+                # Double-check ticket_id consistency from Redis with DB fetched ticket_id (optional but good)
+                # Here, ticket_id from Redis is 'actual_ticket_price_for_transaction'.
+                # Let's define ticket_id_from_redis for clarity
+                ticket_id_from_redis_cache = cached_reservation_data.get('ticket_id')
+
+                if fetched_ticket_id_db != ticket_id_from_redis_cache:
+                    print(
+                        f"Warning: Ticket ID mismatch between Redis Cache ({ticket_id_from_redis_cache}) and DB ({fetched_ticket_id_db}) for reservation {res_id}. Proceeding with DB's ticket_id for integrity.")
+                    # Use DB's source of truth for ticket_id going forward in DB operations
+                    ticket_id_for_db_ops = fetched_ticket_id_db
+                else:
+                    ticket_id_for_db_ops = fetched_ticket_id_db  # Or ticket_id_from_redis_cache, they are same
+
+                # 2. Determine payment_successful_outcome based on method
+                if payment_method_upper == 'WALLET':
+                    if current_wallet_balance >= actual_ticket_price_for_transaction:  # Use the price from Redis
+                        payment_successful_outcome = True
+                        new_wallet_balance = current_wallet_balance - actual_ticket_price_for_transaction
+                        # Update user's wallet balance
+                        cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
+                                       [new_wallet_balance, current_username])
+                    else:
+                        payment_successful_outcome = False
+                        new_wallet_balance = current_wallet_balance  # Wallet balance remains unchanged
+
+                else:  # CRYPTOCURRENCY or CREDIT_CARD
+                    payment_successful_outcome = (user_provided_payment_status_upper == 'SUCCESSFUL')
+                    # Wallet balance remains unchanged for these methods
+
+                    # For non-wallet payments, actual_ticket_price_for_transaction should already be from Redis.
+                    # No need to re-fetch from DB here.
+
+                # 3. Insert into payments table
+                payment_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
+
+                cursor.execute(
+                    """
+                    INSERT INTO payments (username, reservation_id, amount_paid, payment_status,
+                                          date_and_time_of_payment, payment_method)
+                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING payment_id, amount_paid;
+                    """,
+                    [current_username, res_id, actual_ticket_price_for_transaction, payment_status_db, transaction_time,
+                     payment_method_upper]
+                )
+                payment_id, inserted_amount_paid = cursor.fetchone()
+
+                payment_details_for_response = {
+                    "payment_id": payment_id,
+                    "reservation_id": res_id,
+                    "amount_paid": inserted_amount_paid,
+                    "payment_status": payment_status_db,
+                    "payment_method": payment_method_upper,
+                    "date_and_time_of_payment": transaction_time.isoformat()
+                }
+
+                # 4. Update reservation status and details
+                # Only update reservation status to RESERVED if payment is successful.
+                # If payment fails, status remains TEMPORARY. Celery task will revert if time expires.
+                if payment_successful_outcome:
+                    new_reservation_status = 'RESERVED'
+                    cursor.execute(
+                        """
+                        UPDATE reservations
+                        SET reservation_status           = %s,
+                            date_and_time_of_reservation = %s
+                        WHERE reservation_id = %s;
+                        """,
+                        [new_reservation_status, transaction_time, res_id]
+                    )
+
+                # 5. Insert into reservations_history
+                history_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
+                cursor.execute(
+                    """
+                    INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type,
+                                                      buy_status, cancel_by)
+                    VALUES (%s, %s, %s, 'BUY', %s, NULL);
+                    """,
+                    [current_username, res_id, transaction_time, history_status_db]
+                )
+                history_details_for_response = {
+                    "operation_type": "BUY",
+                    "history_status": history_status_db,
+                    "date_and_time": transaction_time.isoformat()
+                }
+
+                # 6. Delete from Redis (only if payment is successful for this reservation)
+                if payment_successful_outcome and redis_client:
+                    redis_key_to_delete = f"temp_reservation:{res_id}"
+                    try:
+                        redis_client.delete(redis_key_to_delete)
+                        print(f"Temporary reservation {res_id} deleted from Redis due to successful payment.")
+                    except redis.exceptions.RedisError as re_del_err:
+                        print(f"Redis error during deletion of temp_reservation {res_id}: {re_del_err}")
+
+        # Final Response
+        response_message = "Payment successful. Reservation confirmed." if payment_successful_outcome else "Payment failed. Please try again or use another payment method."
+        response_status_code = status.HTTP_200_OK if payment_successful_outcome else status.HTTP_400_BAD_REQUEST
+
+        response_data = {
+            'status': 'success' if payment_successful_outcome else 'error',
+            'message': response_message,
+            'payment_details': payment_details_for_response,
+            'reservation_history': history_details_for_response
+        }
+        if payment_method_upper == 'WALLET':
+            response_data['new_wallet_balance'] = int(new_wallet_balance)
+
+        return JsonResponse(response_data, status=response_status_code)
+
+    except Http404 as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=404)
+    except DatabaseError as e:
+        print(f"DatabaseError in pay_for_ticket_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred during the payment process.'},
+                            status=500)
+    except Exception as e:
+        print(f"Unexpected error in pay_for_ticket_view: {e.__class__.__name__}: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
