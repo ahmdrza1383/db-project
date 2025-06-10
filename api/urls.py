@@ -21,4 +21,7 @@ urlpatterns = [
     path('admin/requests/<int:request_id>/approve/', views.admin_approve_request_view, name='admin_approve_request'),
     path('admin/requests/<int:request_id>/reject/', views.admin_reject_request_view, name='admin_reject_request'),
     path('user-bookings/', views.get_user_bookings_view, name='user-bookings'),
+    path('report-issue/', views.report_ticket_issue_view, name='report-issue'),
+    path('admin/reports/<int:report_id>/manage/', views.admin_manage_report_view, name='admin-manage-report'),
+
 ]

@@ -2978,3 +2978,276 @@ def get_user_bookings_view(request):
         print(f"Unexpected error in get_user_bookings_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
                             status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@token_required
+def report_ticket_issue_view(request):
+    """
+    Allows an authenticated user to report an issue related to their ticket reservation.
+
+    This API is restricted to regular 'USER' roles. It enables users to submit reports
+    for issues such as payment problems, incorrect ticket information, unexpected cancellations, etc.
+    The report is associated with a specific reservation and includes a subject and a detailed text.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token>
+
+    Request Body (JSON):
+    {
+        "reservation_id": 123,           // Integer: The ID of the reservation the issue is about.
+        "report_type": "PAYMENT",        // String: Type of the report (e.g., "PAYMENT", "TRAVEL_DELAY", "CANCEL", "OTHER").
+        "report_text": "My payment failed but the ticket is still showing as temporary." // String: Detailed description of the issue.
+    }
+
+    Successful Response (JSON - Status Code: 201 Created):
+    {
+        "status": "success",
+        "message": "Your issue report has been submitted successfully.",
+        "report_details": {
+            "report_id": 1,
+            "reservation_id": 123,
+            "username": "currentUser",
+            "report_type": "PAYMENT",
+            "report_text": "My payment failed but the ticket is still showing as temporary.",
+            "report_status": "UNCHECKED"
+        }
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid JSON format, missing required fields, invalid report_type, invalid reservation_id.
+    - 401 Unauthorized: Token missing or invalid.
+    - 403 Forbidden: User is an admin (only regular users can submit reports) or user does not own the reservation.
+    - 404 Not Found: Reservation with the given ID does not exist for the current user.
+    - 409 Conflict: Reservation is not in a reportable status (e.g., already canceled or not found).
+    - 500 Internal Server Error: Database or unexpected server errors.
+    """
+    current_username = request.user_payload.get('sub')
+    user_role = request.user_payload.get('role')
+
+    if not current_username:
+        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username missing.'}, status=401)
+
+    if user_role != 'USER':
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Forbidden: Only regular users can submit issue reports.'
+        }, status=403)
+
+    try:
+        data = json.loads(request.body)
+        reservation_id = data.get('reservation_id')
+        report_type = data.get('report_type')
+        report_text = data.get('report_text')
+
+        if not all([reservation_id, report_type, report_text]):
+            return JsonResponse({'status': 'error', 'message': 'Missing required fields: reservation_id, report_type, report_text.'}, status=400)
+
+        try:
+            reservation_id = int(reservation_id)
+        except (ValueError, TypeError):
+            return JsonResponse({'status': 'error', 'message': 'Invalid reservation_id. Must be an integer.'}, status=400)
+
+        valid_report_types = ['PAYMENT', 'TRAVEL_DELAY', 'CANCEL', 'OTHER']
+        if report_type.upper() not in valid_report_types:
+            return JsonResponse({'status': 'error', 'message': f"Invalid report_type. Must be one of: {', '.join(valid_report_types)}."}, status=400)
+
+        report_type_upper = report_type.upper()
+
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT reservation_id, username, reservation_status
+                    FROM reservations
+                    WHERE reservation_id = %s AND username = %s FOR UPDATE;
+                    """,
+                    [reservation_id, current_username]
+                )
+                reservation_info = cursor.fetchone()
+
+                if not reservation_info:
+                    return JsonResponse({'status': 'error', 'message': 'Reservation not found or does not belong to you.'}, status=404)
+
+                res_id, res_username, res_status = reservation_info
+
+                if res_status not in ['RESERVED', 'TEMPORARY', 'CANCELED']:
+                     return JsonResponse({'status': 'error', 'message': f'Cannot report for reservation in status: {res_status}.'}, status=409)
+
+                insert_query = """
+                    INSERT INTO reports (username, reservation_id, report_type, report_text)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING report_id, report_status;
+                """
+                cursor.execute(insert_query, [current_username, reservation_id, report_type_upper, report_text])
+                new_report_id, new_report_status = cursor.fetchone()
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Your issue report has been submitted successfully.',
+            'report_details': {
+                'report_id': new_report_id,
+                'reservation_id': reservation_id,
+                'username': current_username,
+                'report_type': report_type_upper,
+                'report_text': report_text,
+                'report_status': new_report_status
+            }
+        }, status=201)
+
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+    except IntegrityError as e:
+        print(f"IntegrityError in report_ticket_issue_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A data integrity error occurred. This report might already exist or reservation is invalid.'}, status=409)
+    except DatabaseError as e:
+        print(f"DatabaseError in report_ticket_issue_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while submitting your report.'}, status=500)
+    except Exception as e:
+        print(f"Unexpected error in report_ticket_issue_view: {e.__class__.__name__}: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
+                            status=500)
+
+
+@csrf_exempt
+@require_http_methods(["PATCH"])
+@token_required
+def admin_manage_report_view(request, report_id):
+    """
+    Allows an admin to review and update the status and response for a user's report.
+    If the report is already 'CHECKED', no updates will be performed.
+
+    This endpoint is restricted to 'ADMIN' users only. It enables an admin to:
+    - Add or update an administrative response to the report.
+    - Implicitly marks the report as 'CHECKED' upon any call, if not already checked.
+    - Provides a specific message if the report is already 'CHECKED', and prevents further updates.
+
+    Path Parameter:
+        report_id (int): The unique identifier for the report to be managed.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token_of_an_admin>
+
+    Request Body (JSON - optional):
+    {
+        "admin_response": "We have reviewed your report and will take action shortly." // Optional: Textual response from admin.
+    }
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "message": "Report updated successfully.",
+        "updated_report": {
+            "report_id": 123,
+            "username": "reported_user",
+            "reservation_id": 456,
+            "report_type": "PAYMENT",
+            "report_text": "Original issue text...",
+            "report_status": "CHECKED",
+            "admin_response": "We have reviewed your report and will take action shortly."
+        }
+    }
+    OR (if report was already CHECKED):
+    {
+        "status": "info",
+        "message": "Report is already checked. No further updates can be performed.",
+        "current_report": { ... } // Returns current state
+    }
+
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid JSON, invalid admin_response type.
+    - 401 Unauthorized: Token is missing or invalid.
+    - 403 Forbidden: The authenticated user is not an admin.
+    - 404 Not Found: Report with the given ID does not exist.
+    - 500 Internal Server Error: Database or unexpected server errors.
+    """
+    admin_username = request.user_payload.get('sub')
+    if request.user_payload.get('role') != 'ADMIN':
+        return JsonResponse({'status': 'error', 'message': 'Forbidden: Admin access required.'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT report_id, username, reservation_id, report_type, report_text, report_status, admin_response
+                    FROM reports
+                    WHERE report_id = %s FOR UPDATE;
+                    """,
+                    [report_id]
+                )
+                existing_report_row = cursor.fetchone()
+                if not existing_report_row:
+                    return JsonResponse({'status': 'error', 'message': 'Report not found.'}, status=404)
+
+                columns = [col[0] for col in cursor.description]
+                existing_report_data = dict(zip(columns, existing_report_row))
+
+                current_report_status = existing_report_data['report_status']
+                current_admin_response = existing_report_data['admin_response']
+
+                if current_report_status == 'CHECKED':
+                    return JsonResponse({
+                        'status': 'info',
+                        'message': 'Report is already checked. No further updates can be performed.',
+                        'current_report': existing_report_data
+                    }, status=200)
+
+                new_report_status_to_set = 'CHECKED'
+                new_admin_response_to_set = current_admin_response
+
+                requested_admin_response = data.get('admin_response')
+
+                if requested_admin_response is not None:
+                    if not isinstance(requested_admin_response, str):
+                        return JsonResponse({'status': 'error', 'message': "admin_response must be a string."},
+                                            status=400)
+                    new_admin_response_to_set = requested_admin_response
+
+                update_clauses = []
+                params = []
+
+                update_clauses.append("report_status = %s")
+                params.append(new_report_status_to_set)
+
+                if new_admin_response_to_set != current_admin_response:
+                    update_clauses.append("admin_response = %s")
+                    params.append(new_admin_response_to_set)
+
+                if not update_clauses:
+                    return JsonResponse({'status': 'error', 'message': 'Internal error: No update clauses generated.'},
+                                        status=500)
+
+                params.append(report_id)
+
+                update_query = f"UPDATE reports SET {', '.join(update_clauses)} WHERE report_id = %s RETURNING *;"
+
+                cursor.execute(update_query, params)
+                updated_row = cursor.fetchone()
+
+                if not updated_row:
+                    raise DatabaseError("Failed to retrieve updated report data after update.")
+
+                updated_columns = [col[0] for col in cursor.description]
+                updated_report_info = dict(zip(updated_columns, updated_row))
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Report updated successfully.',
+            'updated_report': updated_report_info
+        }, status=200)
+
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+    except DatabaseError as e:
+        print(f"DatabaseError in admin_manage_report_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while updating the report.'},
+                            status=500)
+    except Exception as e:
+        print(f"Unexpected error in admin_manage_report_view: {e.__class__.__name__}: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
+                            status=500)
