@@ -1065,5 +1065,4 @@ SELECT
     'NOT_RESERVED',
     NULL,
     NULL,
-    generate_series(1, 20)
-;
+    generate_series(1, 20);

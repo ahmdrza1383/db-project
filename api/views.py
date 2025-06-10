@@ -17,6 +17,8 @@ import re
 from rest_framework.decorators import api_view
 from datetime import datetime
 import json
+import smtplib
+from email.message import EmailMessage
 
 from .auth_utils import *
 from .tasks import expire_reservation
@@ -44,50 +46,29 @@ except AttributeError:
     print("Redis settings (REDIS_HOST, REDIS_PORT) not found in Django settings.")
 
 
+def try_send_email(to_email, otp_code):
+    try:
+        msg = EmailMessage()
+        msg.set_content(f"Your OTP code is: {otp_code}")
+        msg['Subject'] = 'Your OTP Code'
+        msg['From'] = settings.EMAIL_HOST_USER
+        msg['To'] = to_email
+
+        server = smtplib.SMTP(settings.EMAIL_HOST, settings.EMAIL_PORT)
+        server.starttls()  # شروع ارتباط امن TLS
+        server.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email sent successfully to {to_email}")
+        return True
+    except Exception as e:
+        print(f"[EMAIL WARNING] Failed to send email to {to_email}: {e}")
+        return False
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def request_otp_view(request):
-    """
-    Requests an OTP (One-Time Password) for an existing user to log in.
-
-    This API first checks if an active OTP already exists for the provided
-    identifier in Redis. If so, it informs the user to wait.
-    If no active OTP is found, it then checks if a user with the given
-    identifier (email or phone number) exists in the PostgreSQL database.
-    If the user exists and no active OTP is pending, a new OTP is generated,
-    stored in Redis with a TTL, and a success message is returned.
-    If the user does not exist in the database, an OTP will not be sent.
-
-    Request Body (JSON):
-    {
-        "identifier": "user@example.com or 09123456789"
-    }
-
-    Successful Response (JSON):
-    {
-        "status": "success",
-        "message": "An OTP has been sent to {identifier} for login. It is valid for {X} minutes.",
-        "otp_for_testing": "123456" // This should be removed in production
-    }
-
-    Error Responses (JSON):
-    - Invalid JSON format:
-      {"status": "error", "message": "Invalid JSON format in request body."} (Status Code: 400)
-    - Missing identifier:
-      {"status": "error", "message": "Identifier (email or phone_number) is required."} (Status Code: 400)
-    - Redis service unavailable:
-      {"status": "error", "message": "Redis service unavailable. Cannot request OTP."} (Status Code: 503)
-    - Active OTP already exists for the identifier:
-      {"status": "error", "message": "An OTP has already been sent. Please try again in approximately {Y} seconds."} (Status Code: 429)
-    - User not found in the database:
-      {"status": "error", "message": "User not found. Please register or check your identifier."} (Status Code: 404)
-    - Database error during user check:
-      {"status": "error", "message": "A database error occurred while checking user status."} (Status Code: 500)
-    - Redis error during OTP processing:
-      {"status": "error", "message": "Failed to process OTP due to a Redis issue."} (Status Code: 500)
-    - Unexpected server error:
-      {"status": "error", "message": "An unexpected error occurred."} (Status Code: 500)
-    """
     if not redis_client:
         return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot request OTP.'},
                             status=503)
@@ -104,43 +85,52 @@ def request_otp_view(request):
 
         if redis_client.exists(redis_key):
             ttl = redis_client.ttl(redis_key)
-            wait_time_seconds = ttl if ttl and ttl > 0 else getattr(settings, 'OTP_RESEND_WAIT_SECONDS',
-                                                                    60)
+            wait_time_seconds = ttl if ttl and ttl > 0 else getattr(settings, 'OTP_RESEND_WAIT_SECONDS', 60)
             return JsonResponse({
                 'status': 'error',
                 'message': f'An OTP has already been sent to this identifier. Please try again in approximately {wait_time_seconds} seconds.'
             }, status=429)
 
-        user_exists_in_db = False
+        user_info_from_db = None
         is_email_identifier = '@' in identifier
         db_field_to_query = 'email' if is_email_identifier else 'phone_number'
-        sql_query_user_check = f"SELECT 1 FROM users WHERE {db_field_to_query} = %s LIMIT 1"
+        sql_query_user_check = f"SELECT username, profile_status FROM users WHERE {db_field_to_query} = %s LIMIT 1"
 
         try:
             with connection.cursor() as cursor:
                 cursor.execute(sql_query_user_check, [identifier])
-                if cursor.fetchone():
-                    user_exists_in_db = True
+                row = cursor.fetchone()
+                if row:
+                    columns = [col[0] for col in cursor.description]
+                    user_info_from_db = dict(zip(columns, row))
         except DatabaseError as db_e:
             print(f"Database error during user check in request_otp_view: {db_e}")
             return JsonResponse({'status': 'error', 'message': 'A database error occurred while checking user status.'},
                                 status=500)
 
-        if not user_exists_in_db:
+        if not user_info_from_db:
             return JsonResponse(
                 {'status': 'error', 'message': 'User not found. Please register or check your identifier.'},
                 status=404)
+
+        if not user_info_from_db['profile_status']:
+            return JsonResponse(
+                {'status': 'error', 'message': 'Your account is currently inactive. Please contact support.'},
+                status=403)
 
         otp_code = generate_otp()
         otp_ttl_seconds = getattr(settings, 'OTP_TTL_SECONDS', 300)
 
         redis_client.set(name=redis_key, value=otp_code, ex=otp_ttl_seconds)
 
-        print(f"Generated OTP for {identifier} (User in DB: {user_exists_in_db}): {otp_code} (TTL: {otp_ttl_seconds}s)")
+        if is_email_identifier:
+            try_send_email(identifier, otp_code)
+
+        print(f"Generated OTP for {identifier} (User Active: {user_info_from_db['profile_status']}): {otp_code} (TTL: {otp_ttl_seconds}s)")
 
         return JsonResponse({
             'status': 'success',
-            'message': f'An OTP has been sent to {identifier} for login. It is valid for {otp_ttl_seconds // 60} minutes.'
+            'message': f'An OTP has been sent to {identifier} for login. It is valid for {otp_ttl_seconds // 60} minutes.',
         })
 
     except json.JSONDecodeError:
@@ -1556,8 +1546,7 @@ def reserve_ticket_view(request):
                 reservation_for_cache = reservation_outcome_details.copy()
                 reservation_for_cache['expires_in_minutes'] = expiry_minutes_setting
                 reservation_for_cache['ticket_price'] = ticket_price_from_db
-                reservation_for_cache[
-                    'ticket_departure_start'] = departure_start_time.isoformat()
+                reservation_for_cache['ticket_departure_start'] = departure_start_time.isoformat()
 
                 try:
                     redis_client.setex(
@@ -1589,8 +1578,6 @@ def reserve_ticket_view(request):
     except Exception as e:
         print(f"Unexpected error in reserve_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
-
-
 class CancelReservationView(APIView):
     """
        Handles both checking cancellation policies (GET) and confirming the cancellation (POST)
@@ -1943,15 +1930,13 @@ def pay_ticket_view(request):
     If it's not found in Redis, it implies the reservation has expired or was never created,
     and an error is returned.
 
-    ***ADDED CHECK: Cannot pay if ticket departure time is in the past.***
+    ***ADDED CHECK: Cannot pay if ticket departure time is in the past (retrieved solely from Redis cache).***
 
     Users can pay using 'WALLET', 'CRYPTOCURRENCY', or 'CREDIT_CARD'.
     - If `payment_method` is 'WALLET', the system automatically determines
       if the payment is 'SUCCESSFUL' or 'UNSUCCESSFUL' based on wallet balance.
-      The 'payment_status' field in the request body should NOT be provided for 'WALLET' payments.
-    - If `payment_method` is 'CRYPTOCURRENCY' or 'CREDIT_CARD', the user MUST
+    - If `payment_method` is 'CRYPTOCURRENCY', or 'CREDIT_CARD', the user MUST
       provide the 'payment_status' (either 'SUCCESSFUL' or 'UNSUCCESSFUL') in the request body.
-      This simulates external payment gateway responses.
 
     Upon successful payment, the reservation status is confirmed to 'RESERVED',
     a payment record is created, and a 'BUY' entry is added to reservation history.
@@ -1964,54 +1949,30 @@ def pay_ticket_view(request):
 
     Request Body (JSON):
     {
-        "reservation_id": 101,      // Integer: ID of the temporary reservation to pay for
-        "payment_method": "WALLET", // String: "WALLET", "CRYPTOCURRENCY", or "CREDIT_CARD"
-        "payment_status": "SUCCESSFUL" // Optional: MUST be "SUCCESSFUL" or "UNSUCCESSFUL" for non-WALLET methods
+        "reservation_id": 101,
+        "payment_method": "WALLET",
+        "payment_status": "SUCCESSFUL"
     }
 
     Successful Response (JSON - Status Code: 200 OK):
     {
         "status": "success",
         "message": "Payment successful. Reservation confirmed.",
-        "payment_details": {
-            "payment_id": 101,
-            "reservation_id": 101,
-            "amount_paid": 500000,
-            "payment_status": "SUCCESSFUL",
-            "payment_method": "WALLET",
-            "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
-        },
-        "reservation_history": {
-            "operation_type": "BUY",
-            "history_status": "SUCCESSFUL",
-            "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
-        },
-        "new_wallet_balance": 1500000 // Only present if payment_method was WALLET
+        "payment_details": { ... },
+        "reservation_history": { ... },
+        "new_wallet_balance": 1500000
     }
 
-    Error Response (JSON - Status Code: 400 Bad Request - e.g., insufficient wallet balance):
+    Error Response (JSON - Status Code: 400 Bad Request):
     {
         "status": "error",
         "message": "Payment failed: Insufficient wallet balance.",
-        "payment_details": {
-            "payment_id": 102,
-            "reservation_id": 102,
-            "amount_paid": 500000,
-            "payment_status": "UNSUCCESSFUL",
-            "payment_method": "WALLET",
-            "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
-        },
-        "reservation_history": {
-            "operation_type": "BUY",
-            "history_status": "UNSUCCESSFUL",
-            "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
-        }
+        "payment_details": { ... },
+        "reservation_history": { ... }
     }
 
     Error Responses (JSON - other common errors):
-    - 400 Bad Request: Invalid JSON, missing required fields, invalid payment_method,
-                       invalid/missing payment_status for non-wallet methods,
-                       providing payment_status for WALLET method.
+    - 400 Bad Request: Invalid JSON, missing required fields, invalid payment_method, etc.
     - 401 Unauthorized: Token missing or invalid.
     - 403 Forbidden: User role is not 'USER' or reservation does not belong to the user.
     - 404 Not Found: Temporary reservation not found in Redis for the given reservation_id.
@@ -2079,11 +2040,23 @@ def pay_ticket_view(request):
                 {'status': 'error', 'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
                 status=400)
 
-    if not redis_client:
-        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable.'}, status=503)
+    try:
+        redis_client_local = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            db=0,
+            decode_responses=True
+        )
+        redis_client_local.ping()
+    except redis.exceptions.ConnectionError as e:
+        print(f"Could not connect to Redis within pay_ticket_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot process payment.'}, status=503)
+    except AttributeError:
+        print("Redis settings (REDIS_HOST, REDIS_PORT) not found in Django settings within pay_ticket_view.")
+        return JsonResponse({'status': 'error', 'message': 'Redis settings missing. Cannot process payment.'}, status=500)
 
     redis_key = f"temp_reservation:{res_id}"
-    cached_data_json = redis_client.get(redis_key)
+    cached_data_json = redis_client_local.get(redis_key)
 
     if not cached_data_json:
         return JsonResponse({'status': 'error',
@@ -2131,13 +2104,12 @@ def pay_ticket_view(request):
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT u.wallet_balance, r.reservation_status, r.ticket_id, t.departure_start
+                    SELECT u.wallet_balance, r.reservation_status, r.ticket_id
                     FROM users u
                              INNER JOIN reservations r ON u.username = r.username
-                             INNER JOIN tickets t ON r.ticket_id = t.ticket_id -- Join to tickets to get departure_start for double-check
                     WHERE u.username = %s
                       AND r.reservation_id = %s
-                        FOR UPDATE OF u, r, t;
+                        FOR UPDATE OF u, r;
                     """,
                     [current_username, res_id]
                 )
@@ -2148,14 +2120,7 @@ def pay_ticket_view(request):
                                          'message': 'Reservation not found in DB or its status has changed unexpectedly. Please try again.'},
                                         status=404)
 
-                current_wallet_balance, current_res_status_db, fetched_ticket_id_db, db_departure_start_time = user_res_info
-
-                if db_departure_start_time.tzinfo is None:
-                    db_departure_start_time = db_departure_start_time.replace(tzinfo=timezone.utc)
-                if db_departure_start_time <= now_utc:
-                    return JsonResponse({'status': 'error',
-                                         'message': 'Cannot pay for a ticket for a trip that has already started or passed. This temporary reservation is no longer valid.'},
-                                        status=409)
+                current_wallet_balance, current_res_status_db, fetched_ticket_id_db = user_res_info
 
                 if current_res_status_db != 'TEMPORARY':
                     return JsonResponse({'status': 'error',
@@ -2233,10 +2198,10 @@ def pay_ticket_view(request):
                     "date_and_time": transaction_time.isoformat()
                 }
 
-                if payment_successful_outcome and redis_client:
+                if payment_successful_outcome:
                     redis_key_to_delete = f"temp_reservation:{res_id}"
                     try:
-                        redis_client.delete(redis_key_to_delete)
+                        redis_client_local.delete(redis_key_to_delete)
                         print(f"Temporary reservation {res_id} deleted from Redis due to successful payment.")
                     except redis.exceptions.RedisError as re_del_err:
                         print(f"Redis error during deletion of temp_reservation {res_id}: {re_del_err}")
@@ -2258,12 +2223,14 @@ def pay_ticket_view(request):
     except Http404 as e:
         return JsonResponse({'status': 'error', 'message': str(e)}, status=404)
     except DatabaseError as e:
-        print(f"DatabaseError in pay_for_ticket_view: {e}")
+        print(f"DatabaseError in pay_ticket_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'A database error occurred during the payment process.'},
                             status=500)
     except Exception as e:
-        print(f"Unexpected error in pay_for_ticket_view: {e.__class__.__name__}: {e}")
+        print(f"Unexpected error in pay_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
 
 @csrf_exempt
 @require_http_methods(["POST"])
