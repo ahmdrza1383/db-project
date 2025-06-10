@@ -24,5 +24,5 @@ urlpatterns = [
     path('report-issue/', views.report_ticket_issue_view, name='report-issue'),
     path('admin/reports/<int:report_id>/manage/', views.admin_manage_report_view, name='admin-manage-report'),
     path('admin/reports/', views.admin_get_reports_view, name='admin-get-reports'),
-
+    path('get-history/', views.get_history_view, name='get-history'),
 ]

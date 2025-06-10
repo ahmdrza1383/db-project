@@ -90,7 +90,7 @@ def request_otp_view(request):
     """
     if not redis_client:
         return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot request OTP.'},
-                            status=503)  # Service Unavailable
+                            status=503)
 
     try:
         data = json.loads(request.body)
@@ -944,7 +944,6 @@ def search_tickets_view(request):
     destination_city = data.get('destination_city')
     departure_date_str = data.get('departure_date')
 
-    # Optional Filters
     vehicle_type = data.get('vehicle_type')
     min_price = data.get('min_price')
     max_price = data.get('max_price')
@@ -1001,7 +1000,6 @@ def search_tickets_view(request):
                 return JsonResponse({'status': 'error', 'message': f'{param_name} must be a positive integer.'},
                                     status=400)
 
-    # Validate vehicle type
     valid_vehicle_types = ['FLIGHT', 'TRAIN', 'BUS']
     if vehicle_type and vehicle_type.upper() not in valid_vehicle_types:
         return JsonResponse(
@@ -2017,18 +2015,18 @@ def pay_ticket_view(request):
 
     try:
         data = json.loads(request.body)
-        reservation_id_input = data.get('reservation_id')  # New: Get reservation_id from body
+        reservation_id_input = data.get('reservation_id')
         payment_method = data.get('payment_method')
         user_provided_payment_status = data.get('payment_status')
     except json.JSONDecodeError:
         return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
 
-    if not all([reservation_id_input, payment_method]):  # Updated: check for reservation_id
+    if not all([reservation_id_input, payment_method]):
         return JsonResponse({'status': 'error', 'message': 'Missing required fields: reservation_id, payment_method.'},
                             status=400)
 
     try:
-        res_id = int(reservation_id_input)  # Convert reservation_id to int
+        res_id = int(reservation_id_input)
     except (ValueError, TypeError):
         return JsonResponse({'status': 'error', 'message': 'reservation_id must be a valid integer.'}, status=400)
 
@@ -2053,7 +2051,7 @@ def pay_ticket_view(request):
             return JsonResponse({'status': 'error',
                                  'message': 'Payment status cannot be provided for WALLET payments. It is determined automatically.'},
                                 status=400)
-    else:  # CRYPTOCURRENCY or CREDIT_CARD
+    else:
         if user_provided_payment_status is None:
             return JsonResponse(
                 {'status': 'error', 'message': f'Payment status is required for {payment_method_upper} payments.'},
@@ -2064,11 +2062,10 @@ def pay_ticket_view(request):
                 {'status': 'error', 'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
                 status=400)
 
-    # --- START: Logic to find reservation ONLY in Redis using direct key ---
     if not redis_client:
         return JsonResponse({'status': 'error', 'message': 'Redis service unavailable.'}, status=503)
 
-    redis_key = f"temp_reservation:{res_id}"  # Direct key construction
+    redis_key = f"temp_reservation:{res_id}"
     cached_data_json = redis_client.get(redis_key)
 
     if not cached_data_json:
@@ -2083,16 +2080,9 @@ def pay_ticket_view(request):
         return JsonResponse({'status': 'error', 'message': 'Corrupted temporary reservation data in Redis.'},
                             status=500)
 
-    # Validate cached data matches current user and basic reservation details
     if cached_reservation_data.get('username') != current_username:
         return JsonResponse(
             {'status': 'error', 'message': 'Forbidden: This temporary reservation does not belong to you.'}, status=403)
-
-    # Also validate ticket_id and seat_number from cached_data against expected values if they were provided in request body.
-    # For now, we only need reservation_id to GET from Redis and trust that the cached data is correct for the user.
-    # If ticket_id and reservation_seat are still provided in body, you could add checks here:
-    # if cached_reservation_data.get('ticket_id') != ticket_id_from_request or cached_reservation_data.get('seat_number') != reservation_seat_from_request:
-    #     return JsonResponse({'status': 'error', 'message': 'Temporary reservation details mismatch.'}, status=400)
 
     actual_ticket_price_for_transaction = cached_reservation_data.get('ticket_price')
     if actual_ticket_price_for_transaction is None:
@@ -2105,8 +2095,6 @@ def pay_ticket_view(request):
     try:
         with transaction.atomic():
             with connection.cursor() as cursor:
-                # 1. Fetch current user's wallet balance and current reservation status from DB
-                # This is a crucial consistency check and fetches wallet balance.
                 cursor.execute(
                     """
                     SELECT u.wallet_balance, r.reservation_status, r.ticket_id
@@ -2121,7 +2109,6 @@ def pay_ticket_view(request):
                 user_res_info = cursor.fetchone()
 
                 if not user_res_info:
-                    # This implies data inconsistency or reservation got reverted by Celery very recently
                     return JsonResponse({'status': 'error',
                                          'message': 'Reservation not found in DB or its status has changed unexpectedly. Please try again.'},
                                         status=404)
@@ -2133,39 +2120,29 @@ def pay_ticket_view(request):
                                          'message': f'Reservation status is {current_res_status_db}. Only TEMPORARY reservations can be paid. It might have expired or been processed.'},
                                         status=409)
 
-                # Double-check ticket_id consistency from Redis with DB fetched ticket_id (optional but good)
-                # Here, ticket_id from Redis is 'actual_ticket_price_for_transaction'.
-                # Let's define ticket_id_from_redis for clarity
                 ticket_id_from_redis_cache = cached_reservation_data.get('ticket_id')
 
                 if fetched_ticket_id_db != ticket_id_from_redis_cache:
                     print(
                         f"Warning: Ticket ID mismatch between Redis Cache ({ticket_id_from_redis_cache}) and DB ({fetched_ticket_id_db}) for reservation {res_id}. Proceeding with DB's ticket_id for integrity.")
-                    # Use DB's source of truth for ticket_id going forward in DB operations
                     ticket_id_for_db_ops = fetched_ticket_id_db
                 else:
-                    ticket_id_for_db_ops = fetched_ticket_id_db  # Or ticket_id_from_redis_cache, they are same
+                    ticket_id_for_db_ops = fetched_ticket_id_db
 
-                # 2. Determine payment_successful_outcome based on method
                 if payment_method_upper == 'WALLET':
-                    if current_wallet_balance >= actual_ticket_price_for_transaction:  # Use the price from Redis
+                    if current_wallet_balance >= actual_ticket_price_for_transaction:
                         payment_successful_outcome = True
                         new_wallet_balance = current_wallet_balance - actual_ticket_price_for_transaction
-                        # Update user's wallet balance
                         cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
                                        [new_wallet_balance, current_username])
                     else:
                         payment_successful_outcome = False
-                        new_wallet_balance = current_wallet_balance  # Wallet balance remains unchanged
+                        new_wallet_balance = current_wallet_balance
 
-                else:  # CRYPTOCURRENCY or CREDIT_CARD
+                else:
                     payment_successful_outcome = (user_provided_payment_status_upper == 'SUCCESSFUL')
-                    # Wallet balance remains unchanged for these methods
 
-                    # For non-wallet payments, actual_ticket_price_for_transaction should already be from Redis.
-                    # No need to re-fetch from DB here.
 
-                # 3. Insert into payments table
                 payment_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
 
                 cursor.execute(
@@ -2188,9 +2165,6 @@ def pay_ticket_view(request):
                     "date_and_time_of_payment": transaction_time.isoformat()
                 }
 
-                # 4. Update reservation status and details
-                # Only update reservation status to RESERVED if payment is successful.
-                # If payment fails, status remains TEMPORARY. Celery task will revert if time expires.
                 if payment_successful_outcome:
                     new_reservation_status = 'RESERVED'
                     cursor.execute(
@@ -2203,7 +2177,6 @@ def pay_ticket_view(request):
                         [new_reservation_status, transaction_time, res_id]
                     )
 
-                # 5. Insert into reservations_history
                 history_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
                 cursor.execute(
                     """
@@ -2219,7 +2192,6 @@ def pay_ticket_view(request):
                     "date_and_time": transaction_time.isoformat()
                 }
 
-                # 6. Delete from Redis (only if payment is successful for this reservation)
                 if payment_successful_outcome and redis_client:
                     redis_key_to_delete = f"temp_reservation:{res_id}"
                     try:
@@ -2228,7 +2200,6 @@ def pay_ticket_view(request):
                     except redis.exceptions.RedisError as re_del_err:
                         print(f"Redis error during deletion of temp_reservation {res_id}: {re_del_err}")
 
-        # Final Response
         response_message = "Payment successful. Reservation confirmed." if payment_successful_outcome else "Payment failed. Please try again or use another payment method."
         response_status_code = status.HTTP_200_OK if payment_successful_outcome else status.HTTP_400_BAD_REQUEST
 
@@ -2662,7 +2633,7 @@ def admin_reject_request_view(request, request_id):
                 if not req_status:
                     return JsonResponse({'status': 'error', 'message': 'Request not found.'}, status=404)
 
-                if req_status[0]:  # is_checked
+                if req_status[0]:
                     return JsonResponse({'status': 'error', 'message': 'This request has already been processed.'},
                                         status=409)
 
@@ -2785,8 +2756,6 @@ def get_user_bookings_view(request):
                 {'status': 'error', 'message': 'Invalid end_departure_date format. Please use YYYY-MM-DD.'},
                 status=400
             )
-
-    # Modified Query: Reduced columns and JOINs
     query = """
         SELECT
             r.reservation_id,
@@ -2858,17 +2827,15 @@ def get_user_bookings_view(request):
                     if booking.get(key) and hasattr(booking[key], 'isoformat'):
                         booking[key] = booking[key].isoformat()
 
-                # Simplified ticket_details structure
                 booking['ticket_details'] = {
                     'origin_city': booking.pop('origin_city'),
                     'destination_city': booking.pop('destination_city'),
                     'departure_start': booking.pop('departure_start'),
                     'departure_end': booking.pop('departure_end'),
                     'price': booking.pop('price'),
-                    'vehicle_type': booking.pop('vehicle_type')  # Only vehicle type, no vehicle_details sub-object
+                    'vehicle_type': booking.pop('vehicle_type')
                 }
 
-                # History info
                 history_info = {}
                 if booking.get('history_operation_type') is not None:
                     history_info = {
@@ -2882,8 +2849,6 @@ def get_user_bookings_view(request):
                     booking.pop('history_date_and_time', None)
 
                 booking['history_info'] = history_info
-
-                # Payment info removed as requested
 
                 user_bookings.append(booking)
 
@@ -3341,4 +3306,171 @@ def admin_get_reports_view(request):
                             status=500)
     except Exception as e:
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
+from datetime import datetime, timezone
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def get_history_view(request):
+    """
+    Retrieves the authenticated user's reservation history, categorized into past and future reservations.
+
+    This API is restricted to regular 'USER' roles. It fetches all reservation history
+    entries for the authenticated user and divides them into two lists:
+    1. 'past_reservations': Reservations where the ticket's departure_start date is before the current time.
+    2. 'future_reservations': Reservations where the ticket's departure_start date is at or after the current time.
+
+    Both lists are sorted by the ticket's departure_start date.
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token>
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "data": {
+            "past_reservations": [
+                {
+                    "reservation_history_id": 1,
+                    "reservation_id": 101,
+                    "operation_type": "BUY",
+                    "buy_status": "SUCCESSFUL",
+                    "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
+                    "ticket_details": {
+                        "ticket_id": 501,
+                        "origin_city": "Tehran",
+                        "destination_city": "Mashhad",
+                        "departure_start": "YYYY-MM-DDTHH:MM:SS",
+                        "departure_end": "YYYY-MM-DDTHH:MM:SS",
+                        "price": 500000,
+                        "vehicle_type": "FLIGHT"
+                    }
+                }
+                // ... more past reservations
+            ],
+            "future_reservations": [
+                {
+                    "reservation_history_id": 2,
+                    "reservation_id": 102,
+                    "operation_type": "BUY",
+                    "buy_status": "SUCCESSFUL",
+                    "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
+                    "ticket_details": {
+                        "ticket_id": 502,
+                        "origin_city": "Isfahan",
+                        "destination_city": "Shiraz",
+                        "departure_start": "YYYY-MM-DDTHH:MM:SS",
+                        "departure_end": "YYYY-MM-DDTHH:MM:SS",
+                        "price": 300000,
+                        "vehicle_type": "TRAIN"
+                    }
+                }
+                // ... more future reservations
+            ]
+        }
+    }
+
+    Error Responses (JSON):
+    - 401 Unauthorized: Token missing or invalid.
+    - 403 Forbidden: User is an admin (only regular users can access).
+    - 500 Internal Server Error: Database or unexpected server errors.
+    """
+    current_username = request.user_payload.get('sub')
+    user_role = request.user_payload.get('role')
+
+    if not current_username:
+        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username missing.'}, status=401)
+
+    if user_role != 'USER':
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Forbidden: Only regular users can view their reservation history.'
+        }, status=403)
+
+    try:
+        now_utc = datetime.now(timezone.utc)
+
+        query = """
+            SELECT
+                rh.reservation_history_id,
+                rh.reservation_id,
+                rh.date_and_time,
+                rh.operation_type,
+                rh.buy_status,
+                t.ticket_id,
+                t.departure_start,
+                t.departure_end,
+                t.price,
+                v.vehicle_type,
+                loc_origin.city AS origin_city,
+                loc_dest.city AS destination_city
+            FROM reservations_history rh
+            JOIN reservations r ON rh.reservation_id = r.reservation_id
+            JOIN tickets t ON r.ticket_id = t.ticket_id
+            JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+            JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
+            JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+            WHERE rh.username = %s
+            ORDER BY t.departure_start ASC;
+        """
+        params = [current_username]
+
+        past_reservations = []
+        future_reservations = []
+
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            for row in rows:
+                history_entry = dict(zip(columns, row))
+
+                departure_start_dt = history_entry['departure_start']
+                if departure_start_dt.tzinfo is None:
+                    departure_datetime_for_comparison = departure_start_dt.replace(tzinfo=timezone.utc)
+                else:
+                    departure_datetime_for_comparison = departure_start_dt.astimezone(timezone.utc)
+
+                for key in ['date_and_time', 'departure_start', 'departure_end']:
+                    if history_entry.get(key) and hasattr(history_entry[key], 'isoformat'):
+                        if history_entry[key].tzinfo is None:
+                            history_entry[key] = history_entry[key].replace(tzinfo=timezone.utc).isoformat()
+                        else:
+                            history_entry[key] = history_entry[key].isoformat()
+
+
+                ticket_details = {
+                    "ticket_id": history_entry.pop('ticket_id'),
+                    "origin_city": history_entry.pop('origin_city'),
+                    "destination_city": history_entry.pop('destination_city'),
+                    "departure_start": history_entry.pop('departure_start'),
+                    "departure_end": history_entry.pop('departure_end'),
+                    "price": history_entry.pop('price'),
+                    "vehicle_type": history_entry.pop('vehicle_type')
+                }
+                history_entry['ticket_details'] = ticket_details
+
+                if departure_datetime_for_comparison < now_utc:
+                    past_reservations.append(history_entry)
+                else:
+                    future_reservations.append(history_entry)
+
+        return JsonResponse({
+            'status': 'success',
+            'data': {
+                'past_reservations': past_reservations,
+                'future_reservations': future_reservations
+            }
+        }, status=200)
+
+    except DatabaseError as e:
+        print(f"DatabaseError in get_user_reservation_history_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while fetching reservation history.'},
+                            status=500)
+    except Exception as e:
+        print(f"Unexpected error in get_user_reservation_history_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
