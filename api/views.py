@@ -20,6 +20,8 @@ import json
 
 from .auth_utils import *
 from .tasks import expire_reservation
+from .auth_utils import token_required
+
 
 
 def generate_otp(length=6):
@@ -2099,7 +2101,6 @@ def pay_ticket_view(request):
                              'message': 'Ticket price missing from temporary reservation data in Redis. Cannot proceed.'},
                             status=500)
 
-    # --- END: Logic to find reservation ONLY in Redis using direct key ---
 
     try:
         with transaction.atomic():
@@ -2683,6 +2684,8 @@ def admin_reject_request_view(request, request_id):
 def get_user_bookings_view(request):
     """
     Retrieves a list of authenticated user's bookings with optional filters.
+    Optimized to return only essential information from reservations, tickets,
+    locations, and reservations history. Vehicle and payment details are minimized.
 
     This API allows an authenticated 'USER' to fetch their ticket reservations.
     Admins are forbidden from using this endpoint.
@@ -2718,23 +2721,14 @@ def get_user_bookings_view(request):
                     "departure_start": "YYYY-MM-DDTHH:MM:SS",
                     "departure_end": "YYYY-MM-DDTHH:MM:SS",
                     "price": 500000,
-                    "vehicle_type": "FLIGHT",
-                    "airline_name": "Mahan Air",
-                    "vehicle_details": { ... }
+                    "vehicle_type": "FLIGHT" // Only vehicle type, no specific vehicle details
                 },
-                "payment_info": {
-                    "amount_paid": 500000,
-                    "payment_status": "SUCCESSFUL",
-                    "payment_method": "CREDIT_CARD",
-                    "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
-                },
-                "history_info": [
-                    {
-                        "operation_type": "BUY",
-                        "history_status": "SUCCESSFUL",
-                        "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
-                    }
-                ]
+                "history_info": { // Latest history entry for BUY/CANCEL
+                    "operation_type": "BUY",
+                    "history_status": "SUCCESSFUL",
+                    "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+                }
+                // Payment info is removed to simplify output as requested
             }
             // ... more bookings
         ]
@@ -2792,6 +2786,7 @@ def get_user_bookings_view(request):
                 status=400
             )
 
+    # Modified Query: Reduced columns and JOINs
     query = """
         SELECT
             r.reservation_id,
@@ -2802,23 +2797,15 @@ def get_user_bookings_view(request):
             t.departure_start,
             t.departure_end,
             t.price,
-            v.vehicle_type,
+            v.vehicle_type, -- Keep vehicle type, but not specific details
             loc_origin.city AS origin_city,
             loc_dest.city AS destination_city,
-            f.airline_name, f.flight_class, f.number_of_stop, f.flight_code, f.origin_airport, f.destination_airport, f.facility AS flight_facility,
-            tr.train_stars, tr.choosing_a_closed_coupe, tr.facility AS train_facility,
-            b.company_name, b.bus_type, b.number_of_chairs, b.facility AS bus_facility,
-            p.amount_paid, p.payment_status AS payment_current_status, p.payment_method, p.date_and_time_of_payment,
             rh.operation_type AS history_operation_type, rh.buy_status AS history_buy_status, rh.date_and_time AS history_date_and_time
         FROM reservations r
         JOIN tickets t ON r.ticket_id = t.ticket_id
         JOIN vehicles v ON t.vehicle_id = v.vehicle_id
         JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
         JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
-        LEFT JOIN flights f ON v.vehicle_id = f.vehicle_id AND v.vehicle_type = 'FLIGHT'
-        LEFT JOIN trains tr ON v.vehicle_id = tr.vehicle_id AND v.vehicle_type = 'TRAIN'
-        LEFT JOIN buses b ON v.vehicle_id = b.vehicle_id AND v.vehicle_type = 'BUS'
-        LEFT JOIN payments p ON r.reservation_id = p.reservation_id AND p.payment_status = 'SUCCESSFUL'
         LEFT JOIN (
             SELECT
                 rh_inner.reservation_id,
@@ -2867,87 +2854,21 @@ def get_user_bookings_view(request):
             for row in rows:
                 booking = dict(zip(columns, row))
 
-                for key in ['reserved_at', 'departure_start', 'departure_end', 'date_and_time_of_payment',
-                            'history_date_and_time']:
+                for key in ['reserved_at', 'departure_start', 'departure_end', 'history_date_and_time']:
                     if booking.get(key) and hasattr(booking[key], 'isoformat'):
                         booking[key] = booking[key].isoformat()
 
-                vehicle_details = {}
-                current_vehicle_type = booking.pop('vehicle_type')
-
-                if current_vehicle_type == 'FLIGHT':
-                    vehicle_details['airline_name'] = booking.pop('airline_name')
-                    vehicle_details['flight_class'] = booking.pop('flight_class')
-                    vehicle_details['number_of_stop'] = booking.pop('number_of_stop')
-                    vehicle_details['flight_code'] = booking.pop('flight_code')
-                    vehicle_details['origin_airport'] = booking.pop('origin_airport')
-                    vehicle_details['destination_airport'] = booking.pop('destination_airport')
-                    facility_json = booking.pop('flight_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                elif current_vehicle_type == 'TRAIN':
-                    vehicle_details['train_stars'] = booking.pop('train_stars')
-                    vehicle_details['choosing_a_closed_coupe'] = booking.pop('choosing_a_closed_coupe')
-                    facility_json = booking.pop('train_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                elif current_vehicle_type == 'BUS':
-                    vehicle_details['company_name'] = booking.pop('company_name')
-                    vehicle_details['bus_type'] = booking.pop('bus_type')
-                    vehicle_details['number_of_chairs'] = booking.pop('number_of_chairs')
-                    facility_json = booking.pop('bus_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                for key_to_remove in ['airline_name', 'flight_class', 'number_of_stop', 'flight_code', 'origin_airport',
-                                      'destination_airport', 'flight_facility',
-                                      'train_stars', 'choosing_a_closed_coupe', 'train_facility',
-                                      'company_name', 'bus_type', 'number_of_chairs', 'bus_facility']:
-                    booking.pop(key_to_remove, None)
-
+                # Simplified ticket_details structure
                 booking['ticket_details'] = {
                     'origin_city': booking.pop('origin_city'),
                     'destination_city': booking.pop('destination_city'),
                     'departure_start': booking.pop('departure_start'),
                     'departure_end': booking.pop('departure_end'),
                     'price': booking.pop('price'),
-                    'vehicle_type': current_vehicle_type,
-                    'vehicle_details': vehicle_details
+                    'vehicle_type': booking.pop('vehicle_type')  # Only vehicle type, no vehicle_details sub-object
                 }
 
-                payment_info = {}
-                if booking.get('amount_paid') is not None:
-                    payment_info = {
-                        'amount_paid': booking.pop('amount_paid'),
-                        'payment_status': booking.pop('payment_current_status'),
-                        'payment_method': booking.pop('payment_method'),
-                        'date_and_time_of_payment': booking.pop('date_and_time_of_payment')
-                    }
-                else:
-                    booking.pop('amount_paid', None)
-                    booking.pop('payment_current_status', None)
-                    booking.pop('payment_method', None)
-                    booking.pop('date_and_time_of_payment', None)
-
-                booking['payment_info'] = payment_info
-
+                # History info
                 history_info = {}
                 if booking.get('history_operation_type') is not None:
                     history_info = {
@@ -2961,6 +2882,8 @@ def get_user_bookings_view(request):
                     booking.pop('history_date_and_time', None)
 
                 booking['history_info'] = history_info
+
+                # Payment info removed as requested
 
                 user_bookings.append(booking)
 
@@ -3251,3 +3174,171 @@ def admin_manage_report_view(request, report_id):
         print(f"Unexpected error in admin_manage_report_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
                             status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def admin_get_reports_view(request):
+    """
+    Allows an admin to retrieve a list of user reports with various filters.
+
+    This endpoint is restricted to 'ADMIN' users only. It enables an admin to filter reports by:
+    - Username of the reporter
+    - Ticket ID associated with the reservation
+    - Report Type (e.g., PAYMENT, CANCEL)
+    - Report Status (e.g., UNCHECKED, CHECKED)
+    - Reservation ID
+
+    Request Headers:
+        Authorization: Bearer <JWT_access_token_of_an_admin>
+
+    Query Parameters (all optional):
+        username (str): Filter reports by the username of the user who submitted them.
+        ticket_id (int): Filter reports by the ticket ID associated with the reservation.
+        report_type (str): Filter reports by the type of issue (e.g., 'PAYMENT', 'CANCEL', 'TRAVEL_DELAY', 'OTHER').
+        report_status (str): Filter reports by their current status ('UNCHECKED', 'CHECKED').
+        reservation_id (int): Filter reports by the reservation ID.
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "count": 2,
+        "data": [
+            {
+                "report_id": 1,
+                "report_username": "user123",
+                "reservation_id": 101,
+                "ticket_id": 501,
+                "report_type": "PAYMENT",
+                "report_text": "Payment failed but reservation is still temporary.",
+                "report_status": "UNCHECKED",
+                "admin_response": null,
+                "ticket_details": {
+                    "departure_start": "YYYY-MM-DDTHH:MM:SS",
+                    "departure_end": "YYYY-MM-DDTHH:MM:SS",
+                    "origin_city": "Tehran",
+                    "destination_city": "Mashhad"
+                }
+            }
+            // ... more reports
+        ]
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Invalid filter value (e.g., non-integer ticket_id, invalid report_type).
+    - 401 Unauthorized: Token is missing or invalid.
+    - 403 Forbidden: The authenticated user is not an admin.
+    - 500 Internal Server Error: Database or unexpected server errors.
+    """
+    admin_username = request.user_payload.get('sub')
+    if request.user_payload.get('role') != 'ADMIN':
+        return JsonResponse({'status': 'error', 'message': 'Forbidden: Admin access required.'}, status=403)
+
+    try:
+        filter_username = request.GET.get('username')
+        filter_ticket_id_str = request.GET.get('ticket_id')
+        filter_report_type = request.GET.get('report_type')
+        filter_report_status = request.GET.get('report_status')
+        filter_reservation_id_str = request.GET.get('reservation_id')
+
+        query = """
+            SELECT
+                r.report_id,
+                r.username AS report_username,
+                r.reservation_id,
+                r.report_type,
+                r.report_text,
+                r.report_status,
+                r.admin_response,
+                res.ticket_id,
+                t.departure_start,
+                t.departure_end,
+                loc_origin.city AS origin_city,
+                loc_dest.city AS destination_city
+            FROM reports r
+            JOIN reservations res ON r.reservation_id = res.reservation_id
+            JOIN tickets t ON res.ticket_id = t.ticket_id
+            JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
+            JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+            WHERE 1=1
+        """
+        params = []
+
+        if filter_username:
+            query += " AND r.username ILIKE %s"
+            params.append(f"%{filter_username}%")
+
+        if filter_ticket_id_str:
+            try:
+                filter_ticket_id = int(filter_ticket_id_str)
+                query += " AND res.ticket_id = %s"
+                params.append(filter_ticket_id)
+            except ValueError:
+                return JsonResponse({'status': 'error', 'message': 'Invalid ticket_id. Must be an integer.'},
+                                    status=400)
+
+        if filter_report_type:
+            valid_report_types = ['PAYMENT', 'TRAVEL_DELAY', 'CANCEL', 'OTHER']
+            if filter_report_type.upper() not in valid_report_types:
+                return JsonResponse({'status': 'error',
+                                     'message': f"Invalid report_type. Must be one of: {', '.join(valid_report_types)}."},
+                                    status=400)
+            query += " AND r.report_type = %s"
+            params.append(filter_report_type.upper())
+
+        if filter_report_status:
+            valid_report_statuses = ['UNCHECKED', 'CHECKED']
+            if filter_report_status.upper() not in valid_report_statuses:
+                return JsonResponse({'status': 'error',
+                                     'message': f"Invalid report_status. Must be one of: {', '.join(valid_report_statuses)}."},
+                                    status=400)
+            query += " AND r.report_status = %s"
+            params.append(filter_report_status.upper())
+
+        if filter_reservation_id_str:
+            try:
+                filter_reservation_id = int(filter_reservation_id_str)
+                query += " AND r.reservation_id = %s"
+                params.append(filter_reservation_id)
+            except ValueError:
+                return JsonResponse({'status': 'error', 'message': 'Invalid reservation_id. Must be an integer.'},
+                                    status=400)
+
+        query += " ORDER BY r.report_id DESC;"
+
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            reports_list = []
+            for row in rows:
+                report = dict(zip(columns, row))
+
+                for key in ['departure_start', 'departure_end']:
+                    if report.get(key) and hasattr(report[key], 'isoformat'):
+                        report[key] = report[key].isoformat()
+
+                report['ticket_details'] = {
+                    'departure_start': report.pop('departure_start'),
+                    'departure_end': report.pop('departure_end'),
+                    'origin_city': report.pop('origin_city'),
+                    'destination_city': report.pop('destination_city')
+                }
+
+                reports_list.append(report)
+
+        return JsonResponse({
+            'status': 'success',
+            'count': len(reports_list),
+            'data': reports_list
+        }, status=200)
+
+    except DatabaseError as e:
+        print(f"DatabaseError in admin_get_reports_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while fetching reports.'},
+                            status=500)
+    except Exception as e:
+        print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
