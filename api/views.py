@@ -1384,6 +1384,8 @@ def reserve_ticket_view(request):
     for reservation expiry after a defined period (e.g., 10 minutes).
     Also, the temporary reservation details (including ticket_price) are cached in Redis for 10 minutes.
 
+    ***ADDED CHECK: Cannot reserve if ticket departure time is in the past.***
+
     Request Headers:
         Authorization: Bearer <JWT_access_token>
 
@@ -1449,7 +1451,7 @@ def reserve_ticket_view(request):
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT remaining_capacity, ticket_status, price FROM tickets WHERE ticket_id = %s FOR UPDATE;",
+                    "SELECT remaining_capacity, ticket_status, price, departure_start FROM tickets WHERE ticket_id = %s FOR UPDATE;",
                     [ticket_id]
                 )
                 ticket_info = cursor.fetchone()
@@ -1457,7 +1459,16 @@ def reserve_ticket_view(request):
                 if not ticket_info:
                     raise Http404(f"Ticket with ID {ticket_id} not found.")
 
-                current_remaining_capacity, ticket_is_active, ticket_price_from_db = ticket_info
+                current_remaining_capacity, ticket_is_active, ticket_price_from_db, departure_start_time = ticket_info
+
+                now_utc = datetime.now(timezone.utc)
+                if departure_start_time.tzinfo is None:
+                    departure_start_time = departure_start_time.replace(tzinfo=timezone.utc)
+
+                if departure_start_time <= now_utc:
+                    return JsonResponse({'status': 'error',
+                                         'message': 'Cannot reserve a ticket for a trip that has already started or passed.'},
+                                        status=409)
 
                 if not ticket_is_active:
                     return JsonResponse({'status': 'error', 'message': f'Ticket ID {ticket_id} is currently inactive.'},
@@ -1470,15 +1481,17 @@ def reserve_ticket_view(request):
                 find_specific_seat_query = """
                                            SELECT reservation_id, reservation_status, username
                                            FROM reservations
-                                           WHERE ticket_id = %s \
+                                           WHERE ticket_id = %s
                                              AND reservation_seat = %s
-                                               FOR UPDATE; \
+                                               FOR UPDATE;
                                            """
                 cursor.execute(find_specific_seat_query, [ticket_id, seat_number])
                 seat_reservation_info = cursor.fetchone()
 
                 if not seat_reservation_info:
-                    raise Http404(f"Seat number {seat_number} not found for ticket ID {ticket_id}.")
+                    return JsonResponse({'status': 'error',
+                                         'message': f"Seat number {seat_number} not found for ticket ID {ticket_id}. Please check available seats."},
+                                        status=404)
 
                 reservation_id_for_seat, current_seat_status, current_seat_user = seat_reservation_info
                 reservation_id_to_monitor = reservation_id_for_seat
@@ -1543,6 +1556,8 @@ def reserve_ticket_view(request):
                 reservation_for_cache = reservation_outcome_details.copy()
                 reservation_for_cache['expires_in_minutes'] = expiry_minutes_setting
                 reservation_for_cache['ticket_price'] = ticket_price_from_db
+                reservation_for_cache[
+                    'ticket_departure_start'] = departure_start_time.isoformat()
 
                 try:
                     redis_client.setex(
@@ -1928,6 +1943,8 @@ def pay_ticket_view(request):
     If it's not found in Redis, it implies the reservation has expired or was never created,
     and an error is returned.
 
+    ***ADDED CHECK: Cannot pay if ticket departure time is in the past.***
+
     Users can pay using 'WALLET', 'CRYPTOCURRENCY', or 'CREDIT_CARD'.
     - If `payment_method` is 'WALLET', the system automatically determines
       if the payment is 'SUCCESSFUL' or 'UNSUCCESSFUL' based on wallet balance.
@@ -2085,24 +2102,42 @@ def pay_ticket_view(request):
             {'status': 'error', 'message': 'Forbidden: This temporary reservation does not belong to you.'}, status=403)
 
     actual_ticket_price_for_transaction = cached_reservation_data.get('ticket_price')
-    if actual_ticket_price_for_transaction is None:
-        print(f"Error: Ticket price not found in Redis cache for reservation {res_id}.")
+    ticket_departure_start_str_from_cache = cached_reservation_data.get(
+        'ticket_departure_start')
+    if actual_ticket_price_for_transaction is None or ticket_departure_start_str_from_cache is None:
+        print(f"Error: Ticket price or departure time not found in Redis cache for reservation {res_id}.")
         return JsonResponse({'status': 'error',
-                             'message': 'Ticket price missing from temporary reservation data in Redis. Cannot proceed.'},
+                             'message': 'Ticket details missing from temporary reservation data in Redis. Cannot proceed.'},
                             status=500)
 
+    try:
+        departure_start_time_from_cache = datetime.fromisoformat(ticket_departure_start_str_from_cache)
+        now_utc = datetime.now(timezone.utc)
+
+        if departure_start_time_from_cache.tzinfo is None:
+            departure_start_time_from_cache = departure_start_time_from_cache.replace(tzinfo=timezone.utc)
+
+        if departure_start_time_from_cache <= now_utc:
+            return JsonResponse({'status': 'error',
+                                 'message': 'Cannot pay for a ticket for a trip that has already started or passed. This temporary reservation will expire soon.'},
+                                status=409)
+    except ValueError as ve:
+        print(f"Error parsing departure time from cache for reservation {res_id}: {ve}")
+        return JsonResponse({'status': 'error', 'message': 'Corrupted departure time in temporary reservation data.'},
+                            status=500)
 
     try:
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT u.wallet_balance, r.reservation_status, r.ticket_id
+                    SELECT u.wallet_balance, r.reservation_status, r.ticket_id, t.departure_start
                     FROM users u
                              INNER JOIN reservations r ON u.username = r.username
+                             INNER JOIN tickets t ON r.ticket_id = t.ticket_id -- Join to tickets to get departure_start for double-check
                     WHERE u.username = %s
                       AND r.reservation_id = %s
-                        FOR UPDATE OF u, r;
+                        FOR UPDATE OF u, r, t;
                     """,
                     [current_username, res_id]
                 )
@@ -2113,7 +2148,14 @@ def pay_ticket_view(request):
                                          'message': 'Reservation not found in DB or its status has changed unexpectedly. Please try again.'},
                                         status=404)
 
-                current_wallet_balance, current_res_status_db, fetched_ticket_id_db = user_res_info
+                current_wallet_balance, current_res_status_db, fetched_ticket_id_db, db_departure_start_time = user_res_info
+
+                if db_departure_start_time.tzinfo is None:
+                    db_departure_start_time = db_departure_start_time.replace(tzinfo=timezone.utc)
+                if db_departure_start_time <= now_utc:
+                    return JsonResponse({'status': 'error',
+                                         'message': 'Cannot pay for a ticket for a trip that has already started or passed. This temporary reservation is no longer valid.'},
+                                        status=409)
 
                 if current_res_status_db != 'TEMPORARY':
                     return JsonResponse({'status': 'error',
@@ -2141,7 +2183,6 @@ def pay_ticket_view(request):
 
                 else:
                     payment_successful_outcome = (user_provided_payment_status_upper == 'SUCCESSFUL')
-
 
                 payment_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
 
@@ -2223,7 +2264,6 @@ def pay_ticket_view(request):
     except Exception as e:
         print(f"Unexpected error in pay_for_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
-
 
 @csrf_exempt
 @require_http_methods(["POST"])
