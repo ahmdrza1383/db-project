@@ -1000,7 +1000,7 @@ INSERT INTO payments (username, reservation_id, amount_paid, payment_status, dat
 VALUES ('mehdi2121', 101, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
        ('mehdi2121', 102, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
        ('mehdi2121', 103, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
-       ('narges2222', 104, 3000000, 'NOT_PAID', '2025-04-07 16:30:00', 'WALLET'),
+       ('narges2222', 104, 3000000, 'UNSUCCESSFUL', '2025-04-07 16:30:00', 'WALLET'),
        ('narges2222', 104, 3000000, 'SUCCESSFUL', '2025-04-07 20:10:00', 'CREDIT_CARD'),
        ('narges2222', 105, 3000000, 'SUCCESSFUL', '2025-04-07 20:10:00', 'CREDIT_CARD'),
        ('elnaz2828', 106, 3000000, 'SUCCESSFUL', '2025-04-09 02:05:00', 'CREDIT_CARD'),
