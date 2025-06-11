@@ -10,7 +10,6 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from api.tasks import expire_reservation
-import json
 import random
 import string
 import re
@@ -23,7 +22,6 @@ from email.message import EmailMessage
 from .auth_utils import *
 from .tasks import expire_reservation
 from .auth_utils import token_required
-
 
 
 def generate_otp(length=6):
@@ -55,7 +53,7 @@ def try_send_email(to_email, otp_code):
         msg['To'] = to_email
 
         server = smtplib.SMTP(settings.EMAIL_HOST, settings.EMAIL_PORT)
-        server.starttls()  # شروع ارتباط امن TLS
+        server.starttls()
         server.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
         server.send_message(msg)
         server.quit()
@@ -126,7 +124,8 @@ def request_otp_view(request):
         if is_email_identifier:
             try_send_email(identifier, otp_code)
 
-        print(f"Generated OTP for {identifier} (User Active: {user_info_from_db['profile_status']}): {otp_code} (TTL: {otp_ttl_seconds}s)")
+        print(
+            f"Generated OTP for {identifier} (User Active: {user_info_from_db['profile_status']}): {otp_code} (TTL: {otp_ttl_seconds}s)")
 
         return JsonResponse({
             'status': 'success',
@@ -1578,6 +1577,8 @@ def reserve_ticket_view(request):
     except Exception as e:
         print(f"Unexpected error in reserve_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
 class CancelReservationView(APIView):
     """
        Handles both checking cancellation policies (GET) and confirming the cancellation (POST)
@@ -2050,10 +2051,12 @@ def pay_ticket_view(request):
         redis_client_local.ping()
     except redis.exceptions.ConnectionError as e:
         print(f"Could not connect to Redis within pay_ticket_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot process payment.'}, status=503)
+        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot process payment.'},
+                            status=503)
     except AttributeError:
         print("Redis settings (REDIS_HOST, REDIS_PORT) not found in Django settings within pay_ticket_view.")
-        return JsonResponse({'status': 'error', 'message': 'Redis settings missing. Cannot process payment.'}, status=500)
+        return JsonResponse({'status': 'error', 'message': 'Redis settings missing. Cannot process payment.'},
+                            status=500)
 
     redis_key = f"temp_reservation:{res_id}"
     cached_data_json = redis_client_local.get(redis_key)
@@ -2229,7 +2232,6 @@ def pay_ticket_view(request):
     except Exception as e:
         print(f"Unexpected error in pay_ticket_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
-
 
 
 @csrf_exempt
@@ -2773,7 +2775,7 @@ def get_user_bookings_view(request):
             t.departure_start,
             t.departure_end,
             t.price,
-            v.vehicle_type, -- Keep vehicle type, but not specific details
+            v.vehicle_type, 
             loc_origin.city AS origin_city,
             loc_dest.city AS destination_city,
             rh.operation_type AS history_operation_type, rh.buy_status AS history_buy_status, rh.date_and_time AS history_date_and_time
@@ -2937,16 +2939,21 @@ def report_ticket_issue_view(request):
         report_text = data.get('report_text')
 
         if not all([reservation_id, report_type, report_text]):
-            return JsonResponse({'status': 'error', 'message': 'Missing required fields: reservation_id, report_type, report_text.'}, status=400)
+            return JsonResponse(
+                {'status': 'error', 'message': 'Missing required fields: reservation_id, report_type, report_text.'},
+                status=400)
 
         try:
             reservation_id = int(reservation_id)
         except (ValueError, TypeError):
-            return JsonResponse({'status': 'error', 'message': 'Invalid reservation_id. Must be an integer.'}, status=400)
+            return JsonResponse({'status': 'error', 'message': 'Invalid reservation_id. Must be an integer.'},
+                                status=400)
 
         valid_report_types = ['PAYMENT', 'TRAVEL_DELAY', 'CANCEL', 'OTHER']
         if report_type.upper() not in valid_report_types:
-            return JsonResponse({'status': 'error', 'message': f"Invalid report_type. Must be one of: {', '.join(valid_report_types)}."}, status=400)
+            return JsonResponse({'status': 'error',
+                                 'message': f"Invalid report_type. Must be one of: {', '.join(valid_report_types)}."},
+                                status=400)
 
         report_type_upper = report_type.upper()
 
@@ -2963,12 +2970,15 @@ def report_ticket_issue_view(request):
                 reservation_info = cursor.fetchone()
 
                 if not reservation_info:
-                    return JsonResponse({'status': 'error', 'message': 'Reservation not found or does not belong to you.'}, status=404)
+                    return JsonResponse(
+                        {'status': 'error', 'message': 'Reservation not found or does not belong to you.'}, status=404)
 
                 res_id, res_username, res_status = reservation_info
 
                 if res_status not in ['RESERVED', 'TEMPORARY', 'CANCELED']:
-                     return JsonResponse({'status': 'error', 'message': f'Cannot report for reservation in status: {res_status}.'}, status=409)
+                    return JsonResponse(
+                        {'status': 'error', 'message': f'Cannot report for reservation in status: {res_status}.'},
+                        status=409)
 
                 insert_query = """
                     INSERT INTO reports (username, reservation_id, report_type, report_text)
@@ -2995,10 +3005,13 @@ def report_ticket_issue_view(request):
         return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
     except IntegrityError as e:
         print(f"IntegrityError in report_ticket_issue_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A data integrity error occurred. This report might already exist or reservation is invalid.'}, status=409)
+        return JsonResponse({'status': 'error',
+                             'message': 'A data integrity error occurred. This report might already exist or reservation is invalid.'},
+                            status=409)
     except DatabaseError as e:
         print(f"DatabaseError in report_ticket_issue_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred while submitting your report.'}, status=500)
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while submitting your report.'},
+                            status=500)
     except Exception as e:
         print(f"Unexpected error in report_ticket_issue_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
@@ -3149,11 +3162,11 @@ def admin_manage_report_view(request, report_id):
 
 
 @csrf_exempt
-@require_http_methods(["GET"])
+@require_http_methods(["POST"])
 @token_required
 def admin_get_reports_view(request):
     """
-    Allows an admin to retrieve a list of user reports with various filters.
+    Allows an admin to retrieve a list of user reports with various filters sent in the POST body.
 
     This endpoint is restricted to 'ADMIN' users only. It enables an admin to filter reports by:
     - Username of the reporter
@@ -3165,17 +3178,19 @@ def admin_get_reports_view(request):
     Request Headers:
         Authorization: Bearer <JWT_access_token_of_an_admin>
 
-    Query Parameters (all optional):
-        username (str): Filter reports by the username of the user who submitted them.
-        ticket_id (int): Filter reports by the ticket ID associated with the reservation.
-        report_type (str): Filter reports by the type of issue (e.g., 'PAYMENT', 'CANCEL', 'TRAVEL_DELAY', 'OTHER').
-        report_status (str): Filter reports by their current status ('UNCHECKED', 'CHECKED').
-        reservation_id (int): Filter reports by the reservation ID.
+    Request Body (JSON - all fields are optional):
+    {
+        "username": "user123",
+        "ticket_id": 501,
+        "report_type": "PAYMENT",
+        "report_status": "UNCHECKED",
+        "reservation_id": 101
+    }
 
     Successful Response (JSON - Status Code: 200 OK):
     {
         "status": "success",
-        "count": 2,
+        "count": 1,
         "data": [
             {
                 "report_id": 1,
@@ -3198,21 +3213,25 @@ def admin_get_reports_view(request):
     }
 
     Error Responses (JSON):
-    - 400 Bad Request: Invalid filter value (e.g., non-integer ticket_id, invalid report_type).
+    - 400 Bad Request: Invalid JSON or invalid filter value (e.g., non-integer ticket_id).
     - 401 Unauthorized: Token is missing or invalid.
     - 403 Forbidden: The authenticated user is not an admin.
     - 500 Internal Server Error: Database or unexpected server errors.
     """
-    admin_username = request.user_payload.get('sub')
     if request.user_payload.get('role') != 'ADMIN':
         return JsonResponse({'status': 'error', 'message': 'Forbidden: Admin access required.'}, status=403)
 
     try:
-        filter_username = request.GET.get('username')
-        filter_ticket_id_str = request.GET.get('ticket_id')
-        filter_report_type = request.GET.get('report_type')
-        filter_report_status = request.GET.get('report_status')
-        filter_reservation_id_str = request.GET.get('reservation_id')
+        try:
+            data = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+
+        filter_username = data.get('username')
+        filter_ticket_id_str = data.get('ticket_id')
+        filter_report_type = data.get('report_type')
+        filter_report_status = data.get('report_status')
+        filter_reservation_id_str = data.get('reservation_id')
 
         query = """
             SELECT
@@ -3241,12 +3260,12 @@ def admin_get_reports_view(request):
             query += " AND r.username ILIKE %s"
             params.append(f"%{filter_username}%")
 
-        if filter_ticket_id_str:
+        if filter_ticket_id_str is not None:
             try:
                 filter_ticket_id = int(filter_ticket_id_str)
                 query += " AND res.ticket_id = %s"
                 params.append(filter_ticket_id)
-            except ValueError:
+            except (ValueError, TypeError):
                 return JsonResponse({'status': 'error', 'message': 'Invalid ticket_id. Must be an integer.'},
                                     status=400)
 
@@ -3268,12 +3287,12 @@ def admin_get_reports_view(request):
             query += " AND r.report_status = %s"
             params.append(filter_report_status.upper())
 
-        if filter_reservation_id_str:
+        if filter_reservation_id_str is not None:
             try:
                 filter_reservation_id = int(filter_reservation_id_str)
                 query += " AND r.reservation_id = %s"
                 params.append(filter_reservation_id)
-            except ValueError:
+            except (ValueError, TypeError):
                 return JsonResponse({'status': 'error', 'message': 'Invalid reservation_id. Must be an integer.'},
                                     status=400)
 
@@ -3298,7 +3317,6 @@ def admin_get_reports_view(request):
                     'origin_city': report.pop('origin_city'),
                     'destination_city': report.pop('destination_city')
                 }
-
                 reports_list.append(report)
 
         return JsonResponse({
@@ -3313,171 +3331,4 @@ def admin_get_reports_view(request):
                             status=500)
     except Exception as e:
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
-        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
-
-
-from datetime import datetime, timezone
-
-@csrf_exempt
-@require_http_methods(["GET"])
-@token_required
-def get_history_view(request):
-    """
-    Retrieves the authenticated user's reservation history, categorized into past and future reservations.
-
-    This API is restricted to regular 'USER' roles. It fetches all reservation history
-    entries for the authenticated user and divides them into two lists:
-    1. 'past_reservations': Reservations where the ticket's departure_start date is before the current time.
-    2. 'future_reservations': Reservations where the ticket's departure_start date is at or after the current time.
-
-    Both lists are sorted by the ticket's departure_start date.
-
-    Request Headers:
-        Authorization: Bearer <JWT_access_token>
-
-    Successful Response (JSON - Status Code: 200 OK):
-    {
-        "status": "success",
-        "data": {
-            "past_reservations": [
-                {
-                    "reservation_history_id": 1,
-                    "reservation_id": 101,
-                    "operation_type": "BUY",
-                    "buy_status": "SUCCESSFUL",
-                    "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
-                    "ticket_details": {
-                        "ticket_id": 501,
-                        "origin_city": "Tehran",
-                        "destination_city": "Mashhad",
-                        "departure_start": "YYYY-MM-DDTHH:MM:SS",
-                        "departure_end": "YYYY-MM-DDTHH:MM:SS",
-                        "price": 500000,
-                        "vehicle_type": "FLIGHT"
-                    }
-                }
-                // ... more past reservations
-            ],
-            "future_reservations": [
-                {
-                    "reservation_history_id": 2,
-                    "reservation_id": 102,
-                    "operation_type": "BUY",
-                    "buy_status": "SUCCESSFUL",
-                    "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
-                    "ticket_details": {
-                        "ticket_id": 502,
-                        "origin_city": "Isfahan",
-                        "destination_city": "Shiraz",
-                        "departure_start": "YYYY-MM-DDTHH:MM:SS",
-                        "departure_end": "YYYY-MM-DDTHH:MM:SS",
-                        "price": 300000,
-                        "vehicle_type": "TRAIN"
-                    }
-                }
-                // ... more future reservations
-            ]
-        }
-    }
-
-    Error Responses (JSON):
-    - 401 Unauthorized: Token missing or invalid.
-    - 403 Forbidden: User is an admin (only regular users can access).
-    - 500 Internal Server Error: Database or unexpected server errors.
-    """
-    current_username = request.user_payload.get('sub')
-    user_role = request.user_payload.get('role')
-
-    if not current_username:
-        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username missing.'}, status=401)
-
-    if user_role != 'USER':
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Forbidden: Only regular users can view their reservation history.'
-        }, status=403)
-
-    try:
-        now_utc = datetime.now(timezone.utc)
-
-        query = """
-            SELECT
-                rh.reservation_history_id,
-                rh.reservation_id,
-                rh.date_and_time,
-                rh.operation_type,
-                rh.buy_status,
-                t.ticket_id,
-                t.departure_start,
-                t.departure_end,
-                t.price,
-                v.vehicle_type,
-                loc_origin.city AS origin_city,
-                loc_dest.city AS destination_city
-            FROM reservations_history rh
-            JOIN reservations r ON rh.reservation_id = r.reservation_id
-            JOIN tickets t ON r.ticket_id = t.ticket_id
-            JOIN vehicles v ON t.vehicle_id = v.vehicle_id
-            JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
-            JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
-            WHERE rh.username = %s
-            ORDER BY t.departure_start ASC;
-        """
-        params = [current_username]
-
-        past_reservations = []
-        future_reservations = []
-
-        with connection.cursor() as cursor:
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
-
-            for row in rows:
-                history_entry = dict(zip(columns, row))
-
-                departure_start_dt = history_entry['departure_start']
-                if departure_start_dt.tzinfo is None:
-                    departure_datetime_for_comparison = departure_start_dt.replace(tzinfo=timezone.utc)
-                else:
-                    departure_datetime_for_comparison = departure_start_dt.astimezone(timezone.utc)
-
-                for key in ['date_and_time', 'departure_start', 'departure_end']:
-                    if history_entry.get(key) and hasattr(history_entry[key], 'isoformat'):
-                        if history_entry[key].tzinfo is None:
-                            history_entry[key] = history_entry[key].replace(tzinfo=timezone.utc).isoformat()
-                        else:
-                            history_entry[key] = history_entry[key].isoformat()
-
-
-                ticket_details = {
-                    "ticket_id": history_entry.pop('ticket_id'),
-                    "origin_city": history_entry.pop('origin_city'),
-                    "destination_city": history_entry.pop('destination_city'),
-                    "departure_start": history_entry.pop('departure_start'),
-                    "departure_end": history_entry.pop('departure_end'),
-                    "price": history_entry.pop('price'),
-                    "vehicle_type": history_entry.pop('vehicle_type')
-                }
-                history_entry['ticket_details'] = ticket_details
-
-                if departure_datetime_for_comparison < now_utc:
-                    past_reservations.append(history_entry)
-                else:
-                    future_reservations.append(history_entry)
-
-        return JsonResponse({
-            'status': 'success',
-            'data': {
-                'past_reservations': past_reservations,
-                'future_reservations': future_reservations
-            }
-        }, status=200)
-
-    except DatabaseError as e:
-        print(f"DatabaseError in get_user_reservation_history_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred while fetching reservation history.'},
-                            status=500)
-    except Exception as e:
-        print(f"Unexpected error in get_user_reservation_history_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
