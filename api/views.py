@@ -287,25 +287,35 @@ def verify_otp_view(request):
             print(f"Warning: Could not delete OTP key {redis_key} from Redis after verification: {rd_del_e}")
 
         user_database_info = None
+        user_info = None
         is_email = '@' in identifier
         db_field_name_for_query = 'email' if is_email else 'phone_number'
-        sql_query_find_user = f"SELECT username, user_role, email, phone_number, name, wallet_balance FROM users WHERE {db_field_name_for_query} = %s LIMIT 1"
 
         try:
             with connection.cursor() as cursor:
-                cursor.execute(sql_query_find_user, [identifier])
-                row = cursor.fetchone()
-                if row:
-                    columns = [col[0] for col in cursor.description]
-                    user_database_info = dict(zip(columns, row))
-                else:
+                cursor.execute(f"SELECT username FROM users WHERE {db_field_name_for_query} = %s LIMIT 1", [identifier])
+                user_row = cursor.fetchone()
+                if not user_row:
                     print(f"Error: User {identifier} was not found in DB during OTP verification, but OTP was valid.")
                     return JsonResponse(
                         {'status': 'error', 'message': 'User not found, despite valid OTP. Please contact support.'},
                         status=404)
+                username_from_db = user_row[0]
         except DatabaseError as db_error:
-            print(f"Database error during user lookup in verify_otp_view: {db_error}")
+            print(f"Database error during username lookup in verify_otp_view: {db_error}")
             return JsonResponse({'status': 'error', 'message': 'A database error occurred.'}, status=500)
+
+        if redis_client:
+            try:
+                invalidate_user_profile_cache(username_from_db)
+            except redis.exceptions.RedisError as e:
+                print(f"[CACHE WARNING] Failed to invalidate cache for '{username_from_db}' during login: {e}")
+
+        user_database_info = get_user_profile(username_from_db)
+
+        if not user_database_info:
+            return JsonResponse({'status': 'error', 'message': 'Could not retrieve user profile after verification.'},
+                                status=500)
 
         token_payload = {
             "sub": user_database_info['username'],
@@ -314,21 +324,12 @@ def verify_otp_view(request):
         access_token = create_access_token(data=token_payload)
         refresh_token = create_refresh_token(data=token_payload)
 
-        user_info_for_response = {
-            'username': user_database_info['username'],
-            'name': user_database_info.get('name'),
-            'email': user_database_info.get('email'),
-            'phone_number': user_database_info.get('phone_number'),
-            'role': user_database_info.get('user_role', 'USER'),
-            'wallet_balance': user_database_info.get('wallet_balance')
-        }
-
         return JsonResponse({
             'status': 'success',
             'message': 'Login successful! OTP verified.',
             'access_token': access_token,
             'refresh_token': refresh_token,
-            'user_info': user_info_for_response
+            'user_info': user_database_info
         })
 
     except json.JSONDecodeError:
@@ -440,6 +441,12 @@ def user_signup_view(request):
             else:
                 raise DatabaseError("User insertion succeeded but failed to return user information.")
 
+            inserted_user_info = dict(zip(columns, inserted_row))
+
+        if inserted_user_info and redis_client:
+            print(f"Populating cache for new user: {inserted_user_info['username']}")
+            get_user_profile(inserted_user_info['username'])
+
         token_payload = {
             "sub": inserted_user_info['username'],
             "role": inserted_user_info.get('user_role', 'USER')
@@ -512,67 +519,80 @@ def user_signup_view(request):
 @token_required
 def update_user_profile_view(request):
     """
-    Updates profile information for the authenticated user, and allows adding to wallet balance.
+        Updates profile information for the authenticated user, and allows adding to wallet balance.
 
-    This API endpoint allows an authenticated user to update their profile details.
-    All fields in the request body are optional. To keep a field unchanged,
-    simply omit it from the request payload.
+        This API endpoint allows an authenticated user to update their profile details.
+        All fields in the request body are optional. To keep a field unchanged,
+        simply omit it from the request payload.
 
-    A new field 'add_to_wallet_balance' is introduced. If provided, the specified
-    amount will be added to the user's current wallet balance in the 'users' table ONLY.
-    No record will be created in the 'payments' table for this operation.
+        A special field 'add_to_wallet_balance' is introduced. If provided, the specified
+        amount will be added to the user's current wallet balance atomically in the database.
+        No record will be created in the 'payments' table for this specific top-up operation.
 
-    Sensitive fields like username, password, and email can be changed by providing
-    'new_username', 'new_password', and 'new_email' respectively. Changing
-    username or password will result in new JWTs being issued.
+        For optional fields like 'name', 'phone_number', 'date_of_birth', and 'city_id',
+        sending a 'null' value will result in a 400 Bad Request error.
 
-    After a successful database update, the user's profile cache in Redis
-    will be updated or created. If the username changes, the cache for the
-    old username will be deleted.
+        Sensitive fields like username, password, and email can be changed by providing
+        'new_username', 'new_password', and 'new_email' respectively. Changing the
+        username or password will result in new JWTs being issued in the response.
 
-    Request Headers:
-        Authorization: Bearer <JWT_access_token>
+        After a successful database update, the user's profile cache in Redis
+        is forcefully updated to ensure data consistency.
 
-    Request Body (JSON - all fields are optional):
-    {
-        "name": "New Full Name",
-        "new_username": "new_unique_username123",
-        "new_password": "aVeryStrongPassword!@#",
-        "new_email": "new.email.unique@example.com",
-        "phone_number": "09123456780",
-        "city_id": 10,           // Integer ID referencing locations table
-        "new_authentication_method": "PHONE_NUMBER", // 'EMAIL' or 'PHONE_NUMBER'
-        "add_to_wallet_balance": 50000 // Integer: amount to add to wallet
-    }
+        Request Headers:
+            Authorization: Bearer <JWT_access_token>
 
-    Successful Response (JSON - Status Code: 200 OK):
-    {
-        "status": "success",
-        "message": "Profile updated successfully.",
-        "access_token": "<new_jwt_access_token_if_username_or_password_changed>",
-        "refresh_token": "<new_jwt_refresh_token_if_username_or_password_changed>",
-        "user_info": {
-            "username": "current_or_new_username",
+        Request Body (JSON - all fields are optional):
+        {
             "name": "New Full Name",
-            "email": "current_or_new_email@example.com",
+            "new_username": "new_unique_username123",
+            "new_password": "aVeryStrongPassword!@#",
+            "new_email": "new.email.unique@example.com",
             "phone_number": "09123456780",
+            "date_of_birth": "1990-01-01",
             "city_id": 10,
-            "authentication_method": "PHONE_NUMBER",
-            "role": "USER",
-            "wallet_balance": 1500000 // Updated wallet balance
+            "new_authentication_method": "PHONE_NUMBER", // or "EMAIL"
+            "add_to_wallet_balance": 50000
         }
-    }
 
-    Error Responses (JSON):
-    - 400 Bad Request: Invalid JSON, missing required fields for sensitive operations,
-                       invalid data format (e.g., email, phone),
-                       negative or invalid amount for wallet top-up,
-                       explicitly sending 'null' for certain fields.
-    - 401 Unauthorized: Token missing or invalid.
-    - 404 Not Found: User not found.
-    - 409 Conflict: Username, email, or phone number already exists.
-    - 500 Internal Server Error: Database or other unexpected server errors.
-    """
+        Successful Response (JSON - Status Code: 200 OK):
+        {
+            "status": "success",
+            "message": "Profile updated successfully.",
+            "access_token": "<new_jwt_access_token_if_needed>",
+            "refresh_token": "<new_jwt_refresh_token_if_needed>",
+            "user_info": {
+                "username": "current_or_new_username",
+                "name": "New Full Name",
+                "email": "current_or_new_email@example.com",
+                "phone_number": "09123456780",
+                "date_of_birth": "1990-01-01",
+                "city_id": 10,
+                "authentication_method": "PHONE_NUMBER",
+                "role": "USER",
+                "wallet_balance": 1500000 // Updated wallet balance
+            }
+        }
+
+        Error Responses (JSON):
+        - 400 Bad Request: Returned for various input validation failures:
+            * Invalid JSON format.
+            * Providing 'null' or empty values for fields that do not support it.
+            * Invalid data format (e.g., for email, phone number, date, city_id).
+            * Providing a non-positive or non-integer value for 'add_to_wallet_balance'.
+            * Sending an empty request body or no valid fields for an update.
+
+        - 401 Unauthorized: Returned if the Authorization token is missing, malformed, or invalid.
+
+        - 404 Not Found: Returned if the user associated with the token is not found in the database,
+          or if an update query affects zero rows unexpectedly.
+
+        - 409 Conflict: Returned if a new 'username', 'email', or 'phone_number' is provided
+          and it already exists in the database for another user.
+
+        - 500 Internal Server Error: Returned for unexpected database errors or other
+          unhandled exceptions on the server side.
+        """
     try:
         current_username_from_token = request.user_payload.get('sub')
         if not current_username_from_token:
@@ -580,21 +600,19 @@ def update_user_profile_view(request):
                                 status=401)
 
         try:
-            data_payload = json.loads(request.body)
+            data_payload = json.loads(request.body) if request.body else {}
         except json.JSONDecodeError:
             return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
 
         if not data_payload:
-            return JsonResponse({'status': 'error',
-                                 'message': 'No fields provided for update. Please provide at least one field to update.'},
-                                status=400)
+            return JsonResponse({'status': 'error', 'message': 'No fields provided for update.'}, status=400)
 
-        fields_to_update_in_db = {}
-        requires_new_jwt_token = False
+        fields_to_set = {}
         add_to_wallet_amount = 0
+        requires_new_jwt_token = False
 
         if 'add_to_wallet_balance' in data_payload:
-            wallet_amount_input = data_payload['add_to_wallet_balance']
+            wallet_amount_input = data_payload.pop('add_to_wallet_balance')
             try:
                 add_to_wallet_amount = int(wallet_amount_input)
                 if add_to_wallet_amount <= 0:
@@ -606,244 +624,157 @@ def update_user_profile_view(request):
                     {'status': 'error', 'message': 'Invalid amount for wallet balance. Must be an integer.'},
                     status=400)
 
-            data_payload.pop('add_to_wallet_balance')
+        for field, value in data_payload.items():
+            if field == 'name':
+                if value is None or not str(value).strip():
+                    return JsonResponse({'status': 'error', 'message': 'Name cannot be null or empty.'}, status=400)
+                fields_to_set['name'] = str(value).strip()
 
-        optional_fields_no_explicit_null = {
-            'name': 'Name',
-            'phone_number': 'Phone number',
-            'city_id': 'City ID'
-        }
-
-        for field_key, field_name_display in optional_fields_no_explicit_null.items():
-            if field_key in data_payload:
-                value = data_payload[field_key]
+            elif field == 'phone_number':
                 if value is None:
-                    return JsonResponse({'status': 'error',
-                                         'message': f'{field_name_display} cannot be set to null. Omit the field to keep the current value or provide a new value.'},
+                    return JsonResponse({'status': 'error', 'message': 'Phone number cannot be null.'}, status=400)
+                phone_to_validate = str(value).strip()
+                if not re.match(r"^09\d{9}$", phone_to_validate):
+                    return JsonResponse({'status': 'error', 'message': 'Invalid phone number format (09XXXXXXXXX).'},
                                         status=400)
+                fields_to_set['phone_number'] = phone_to_validate
 
-                if field_key == 'name':
-                    if not isinstance(value, str) or not value.strip():
-                        return JsonResponse({'status': 'error', 'message': 'Name cannot be empty if provided.'},
+            elif field == 'date_of_birth':
+                if value is None:
+                    return JsonResponse({'status': 'error', 'message': 'Date of birth cannot be null.'}, status=400)
+                try:
+                    dob_obj = datetime.strptime(str(value), '%Y-%m-%d').date()
+                    if dob_obj > date.today():
+                        return JsonResponse({'status': 'error', 'message': 'Date of birth cannot be in the future.'},
                                             status=400)
-                    fields_to_update_in_db['name'] = value.strip()
+                    fields_to_set['date_of_birth'] = dob_obj
+                except ValueError:
+                    return JsonResponse({'status': 'error', 'message': 'Invalid date format (YYYY-MM-DD).'}, status=400)
 
-                elif field_key == 'phone_number':
-                    phone_to_validate = str(value).strip()
-                    if not phone_to_validate:
-                        return JsonResponse({'status': 'error', 'message': 'Phone number cannot be empty if provided.'},
-                                            status=400)
-                    phone_pattern = r"^09\d{9}$"
-                    if not re.match(phone_pattern, phone_to_validate):
-                        return JsonResponse(
-                            {'status': 'error', 'message': 'Invalid phone number format (09XXXXXXXXX).'}, status=400)
-                    fields_to_update_in_db['phone_number'] = phone_to_validate
+            elif field == 'city_id':
+                if value is None:
+                    return JsonResponse({'status': 'error', 'message': 'City ID cannot be null.'}, status=400)
+                if not isinstance(value, int):
+                    return JsonResponse({'status': 'error', 'message': 'city_id must be an integer.'}, status=400)
+                fields_to_set['city'] = value
 
-                elif field_key == 'city_id':
-                    if not isinstance(value, int):
-                        return JsonResponse({'status': 'error', 'message': 'city_id must be an integer.'}, status=400)
-                    fields_to_update_in_db['city'] = value
+            elif field == 'new_username':
+                if value is None or not str(value).strip():
+                    return JsonResponse({'status': 'error', 'message': 'New username cannot be null or empty.'},
+                                        status=400)
+                new_username_val = str(value).strip()
+                if new_username_val != current_username_from_token:
+                    fields_to_set['username'] = new_username_val
+                    requires_new_jwt_token = True
 
-        if 'new_username' in data_payload:
-            new_username_val = data_payload.get('new_username')
-            if new_username_val is None or not str(new_username_val).strip():
-                return JsonResponse({'status': 'error', 'message': 'New username cannot be null or empty.'}, status=400)
-            new_username_val = str(new_username_val).strip()
-            if new_username_val != current_username_from_token:
-                fields_to_update_in_db['username'] = new_username_val
+            elif field == 'new_password':
+                if value is None or not str(value):
+                    return JsonResponse({'status': 'error', 'message': 'New password cannot be null or empty.'},
+                                        status=400)
+                fields_to_set['password'] = generate_password_hash(str(value))
                 requires_new_jwt_token = True
 
-        if 'new_password' in data_payload:
-            new_password_val = data_payload.get('new_password')
-            if new_password_val is None or not str(new_password_val):
-                return JsonResponse({'status': 'error', 'message': 'New password cannot be null or empty.'}, status=400)
-            fields_to_update_in_db['password'] = generate_password_hash(str(new_password_val))
-            requires_new_jwt_token = True
+            elif field == 'new_email':
+                if value is None or not str(value).strip():
+                    return JsonResponse({'status': 'error', 'message': 'New email cannot be null or empty.'},
+                                        status=400)
+                email_to_validate = str(value).strip()
+                if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_to_validate):
+                    return JsonResponse({'status': 'error', 'message': 'Invalid new email format.'}, status=400)
+                fields_to_set['email'] = email_to_validate
 
-        if 'new_email' in data_payload:
-            new_email_input = data_payload.get('new_email')
-            if new_email_input is None or not str(new_email_input).strip():
-                return JsonResponse({'status': 'error', 'message': 'New email cannot be null or empty.'}, status=400)
+            elif field == 'new_authentication_method':
+                if value is None or not str(value).strip():
+                    return JsonResponse(
+                        {'status': 'error', 'message': 'New authentication method cannot be null or empty.'},
+                        status=400)
+                auth_method_val = str(value).upper().strip()
+                if auth_method_val not in ['EMAIL', 'PHONE_NUMBER']:
+                    return JsonResponse({'status': 'error',
+                                         'message': "Invalid authentication_method. Must be 'EMAIL' or 'PHONE_NUMBER'."},
+                                        status=400)
+                fields_to_set['authentication_method'] = auth_method_val
 
-            email_to_validate = str(new_email_input).strip()
-            email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-            if not re.match(email_pattern, email_to_validate):
-                return JsonResponse({'status': 'error', 'message': 'Invalid new email format.'}, status=400)
-            fields_to_update_in_db['email'] = email_to_validate
-
-        if 'new_authentication_method' in data_payload:
-            auth_method_val = data_payload.get('new_authentication_method')
-            if auth_method_val is None or not str(auth_method_val).strip():
-                return JsonResponse(
-                    {'status': 'error', 'message': 'New authentication method cannot be null or empty.'}, status=400)
-
-            auth_method_val = str(auth_method_val).upper().strip()
-            if auth_method_val not in ['EMAIL', 'PHONE_NUMBER']:
-                return JsonResponse(
-                    {'status': 'error', 'message': "Invalid authentication_method. Must be 'EMAIL' or 'PHONE_NUMBER'."},
-                    status=400)
-            fields_to_update_in_db['authentication_method'] = auth_method_val
-
-        if not fields_to_update_in_db and add_to_wallet_amount == 0:
+        if not fields_to_set and add_to_wallet_amount == 0:
             return JsonResponse({'status': 'error', 'message': 'No valid fields or changes provided for update.'},
                                 status=400)
+
+        set_clauses = []
+        params = []
+
+        for field, value in fields_to_set.items():
+            set_clauses.append(f"{field} = %s")
+            params.append(value)
+
+        if add_to_wallet_amount > 0:
+            set_clauses.append("wallet_balance = wallet_balance + %s")
+            params.append(add_to_wallet_amount)
+
+        params.append(current_username_from_token)
+
+        update_query = f"""
+            UPDATE users
+            SET {', '.join(set_clauses)}
+            WHERE username = %s
+            RETURNING *;
+        """
 
         updated_user_data_from_db = None
         with transaction.atomic():
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT username,
-                           name,
-                           email,
-                           phone_number,
-                           date_of_sign_in,
-                           city,
-                           user_role,
-                           authentication_method,
-                           profile_status,
-                           wallet_balance
-                    FROM users
-                    WHERE username = %s FOR UPDATE;
-                    """,
-                    [current_username_from_token]
-                )
-                current_user_data = cursor.fetchone()
-                if not current_user_data:
-                    return JsonResponse({'status': 'error', 'message': 'User not found.'}, status=404)
+                cursor.execute(update_query, params)
+                if cursor.rowcount == 0:
+                    return JsonResponse(
+                        {'status': 'error', 'message': 'User not found or no effective changes were applied.'},
+                        status=404)
 
-                current_user_columns = [col[0] for col in cursor.description]
-                current_user_dict = dict(zip(current_user_columns, current_user_data))
-                current_wallet_balance = current_user_dict.get('wallet_balance', 0)
+                updated_row = cursor.fetchone()
+                columns = [col[0] for col in cursor.description]
+                updated_user_data_from_db = dict(zip(columns, updated_row))
 
-                final_username_for_db_ops = current_user_dict['username']
-                update_set_clauses = []
-                update_params = []
-
-                if fields_to_update_in_db:
-                    for db_column, value in fields_to_update_in_db.items():
-                        update_set_clauses.append(f"{db_column} = %s")
-                        update_params.append(value)
-
-                    if 'username' in fields_to_update_in_db:
-                        final_username_for_db_ops = fields_to_update_in_db['username']
-
-                if add_to_wallet_amount > 0:
-                    new_wallet_balance = current_wallet_balance + add_to_wallet_amount
-                    update_set_clauses.append("wallet_balance = %s")
-                    update_params.append(new_wallet_balance)
-                    current_user_dict['wallet_balance'] = new_wallet_balance
-
-                if update_set_clauses:
-                    update_sql_query = f"""
-                        UPDATE users
-                        SET {', '.join(update_set_clauses)}
-                        WHERE username = %s;
-                    """
-                    update_params.append(current_username_from_token)
-                    cursor.execute(update_sql_query, update_params)
-                    if cursor.rowcount == 0:
-                        print(f"Warning: User {current_username_from_token} not updated by main update query.")
-
-                cursor.execute(
-                    """
-                    SELECT username,
-                           name,
-                           email,
-                           phone_number,
-                           date_of_sign_in,
-                           city,
-                           user_role,
-                           authentication_method,
-                           profile_status,
-                           wallet_balance
-                    FROM users
-                    WHERE username = %s;
-                    """,
-                    [final_username_for_db_ops]
-                )
-                final_user_row_tuple = cursor.fetchone()
-                if not final_user_row_tuple:
-                    raise DatabaseError("Failed to retrieve final user data after update/wallet top-up.")
-
-                final_user_columns = [col[0] for col in cursor.description]
-                updated_user_data_from_db = dict(zip(final_user_columns, final_user_row_tuple))
-
-        user_info_for_response_and_cache = updated_user_data_from_db.copy()
-
-        if 'city' in user_info_for_response_and_cache:
-            user_info_for_response_and_cache['city_id'] = user_info_for_response_and_cache.pop('city')
-
-        if user_info_for_response_and_cache.get('date_of_sign_in') and \
-                hasattr(user_info_for_response_and_cache['date_of_sign_in'], 'isoformat'):
-            user_info_for_response_and_cache['date_of_sign_in'] = user_info_for_response_and_cache[
-                'date_of_sign_in'].isoformat()
-
-        final_username_in_db = user_info_for_response_and_cache.get('username')
+        final_username_in_db = updated_user_data_from_db.get('username')
 
         if redis_client:
             try:
                 if final_username_in_db != current_username_from_token:
-                    old_username_cache_key = f"user_profile:{current_username_from_token}"
-                    redis_client.delete(old_username_cache_key)
-                    print(f"User profile cache DELETED for old username: {current_username_from_token}")
+                    invalidate_user_profile_cache(current_username_from_token)
 
-                profile_cache_key = f"user_profile:{final_username_in_db}"
-                profile_cache_ttl_seconds = getattr(settings, 'USER_PROFILE_CACHE_TTL_SECONDS', 3600)
-                profile_data_json_str = json.dumps(user_info_for_response_and_cache)
-
-                redis_client.setex(
-                    profile_cache_key,
-                    profile_cache_ttl_seconds,
-                    profile_data_json_str
-                )
-                print(
-                    f"User profile UPDATED/ADDED in cache for username: {final_username_in_db} with TTL: {profile_cache_ttl_seconds}s")
+                invalidate_user_profile_cache(final_username_in_db)
+                get_user_profile(final_username_in_db)
             except redis.exceptions.RedisError as re_cache_err:
-                print(f"Redis error during profile cache operation: {re_cache_err}")
+                print(f"Redis error during profile cache update: {re_cache_err}")
 
-        response_json_data = {
-            'status': 'success',
-            'message': 'Profile updated successfully.',
-            'user_info': user_info_for_response_and_cache
-        }
+        user_info_for_response = updated_user_data_from_db.copy()
+        user_info_for_response.pop('password', None)
+
+        if user_info_for_response.get('date_of_birth') and isinstance(user_info_for_response['date_of_birth'], date):
+            user_info_for_response['date_of_birth'] = user_info_for_response['date_of_birth'].isoformat()
+        if user_info_for_response.get('date_of_sign_in') and hasattr(user_info_for_response['date_of_sign_in'],
+                                                                     'isoformat'):
+            user_info_for_response['date_of_sign_in'] = user_info_for_response['date_of_sign_in'].isoformat()
+        if 'city' in user_info_for_response:
+            user_info_for_response['city_id'] = user_info_for_response.pop('city')
+
+        response_json_data = {'status': 'success', 'message': 'Profile updated successfully.',
+                              'user_info': user_info_for_response}
 
         if requires_new_jwt_token:
-            new_jwt_payload = {
-                "sub": final_username_in_db,
-                "role": user_info_for_response_and_cache.get('user_role', 'USER')
-            }
+            new_jwt_payload = {"sub": final_username_in_db, "role": user_info_for_response.get('user_role', 'USER')}
             response_json_data['access_token'] = create_access_token(data=new_jwt_payload)
             response_json_data['refresh_token'] = create_refresh_token(data=new_jwt_payload)
 
         return JsonResponse(response_json_data)
 
-    except json.JSONDecodeError:
-        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
     except IntegrityError as e:
         err_str = str(e).lower()
-
-        if "users_pkey" in err_str or "users_username_key" in err_str or (
-                "duplicate key" in err_str and "username" in err_str):
+        if "users_pkey" in err_str or "users_username_key" in err_str:
             return JsonResponse({'status': 'error', 'message': 'This username is already taken.'}, status=409)
-        if "users_email_key" in err_str or ("duplicate key" in err_str and "email" in err_str):
+        if "users_email_key" in err_str:
             return JsonResponse({'status': 'error', 'message': 'This email address is already registered.'}, status=409)
-        if "users_phone_number_key" in err_str or ("duplicate key" in err_str and "phone_number" in err_str):
-            if 'phone_number' in fields_to_update_in_db:
-                return JsonResponse({'status': 'error', 'message': 'This phone number is already registered.'},
-                                    status=409)
-            else:
-                print(f"Database IntegrityError (phone_number related but not directly provided): {e}")
-                return JsonResponse(
-                    {'status': 'error',
-                     'message': 'A data integrity error occurred related to phone number. Check your inputs.'},
-                    status=409)
-
-        if "violates foreign key constraint" in err_str and (
-                "users_city_fkey" in err_str or "users_city_id_fkey" in err_str):
-            if 'city' in fields_to_update_in_db and fields_to_update_in_db.get('city') is not None:
-                return JsonResponse({'status': 'error', 'message': 'Invalid city ID provided.'}, status=400)
-
+        if "users_phone_number_key" in err_str:
+            return JsonResponse({'status': 'error', 'message': 'This phone number is already registered.'}, status=409)
+        if "violates foreign key constraint" in err_str and "city" in err_str:
+            return JsonResponse({'status': 'error', 'message': 'Invalid city ID provided.'}, status=400)
         print(f"DB IntegrityError on profile update: {e}")
         return JsonResponse(
             {'status': 'error', 'message': 'Data integrity error. Check unique fields or foreign keys.'}, status=409)
@@ -2208,6 +2139,16 @@ def pay_ticket_view(request):
                         new_wallet_balance = current_wallet_balance - actual_ticket_price_for_transaction
                         cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
                                        [new_wallet_balance, current_username])
+
+                        if redis_client:
+                            try:
+                                invalidate_user_profile_cache(current_username)
+                                get_user_profile(current_username)
+                                print(
+                                    f"User profile cache forcefully updated for '{current_username}' after successful wallet payment.")
+                            except redis.exceptions.RedisError as re_cache_err:
+                                print(f"Redis error during cache update after payment: {re_cache_err}")
+
                     else:
                         payment_successful_outcome = False
                         new_wallet_balance = current_wallet_balance
@@ -2616,6 +2557,7 @@ def admin_approve_request_view(request, request_id):
                         status=409
                     )
 
+                user_to_update = data_dict['user_username']
                 message = ""
                 if data_dict['request_subject'] == 'CANCEL':
                     time_to_departure = data_dict['departure_start'] - data_dict['requested_at']
@@ -2627,7 +2569,12 @@ def admin_approve_request_view(request, request_id):
 
                     new_wallet_balance = data_dict['wallet_balance'] + refund_amount
                     cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
-                                   [new_wallet_balance, data_dict['user_username']])
+                                   [new_wallet_balance, user_to_update])
+                    # update user profile in redis
+                    if redis_client:
+                        invalidate_user_profile_cache(user_to_update)
+                        get_user_profile(user_to_update)
+
                     cursor.execute(
                         "UPDATE reservations SET reservation_status = 'NOT_RESERVED', username = NULL, date_and_time_of_reservation = NULL WHERE reservation_id = %s;",
                         [data_dict['reservation_id']])
