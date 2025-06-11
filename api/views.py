@@ -10,6 +10,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from api.tasks import expire_reservation
+from django.conf import settings
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 import random
 import string
 import re
@@ -21,7 +24,6 @@ from email.message import EmailMessage
 
 from .auth_utils import *
 from .tasks import expire_reservation
-from .auth_utils import token_required
 
 
 def generate_otp(length=6):
@@ -44,29 +46,90 @@ except AttributeError:
     print("Redis settings (REDIS_HOST, REDIS_PORT) not found in Django settings.")
 
 
-def try_send_email(to_email, otp_code):
+def send_otp_email_html(recipient_email, otp_code):
+    """
+    Renders an HTML template with the OTP and sends it as a multipart email.
+    Uses the smtplib configuration from settings.
+    """
     try:
-        msg = EmailMessage()
-        msg.set_content(f"Your OTP code is: {otp_code}")
-        msg['Subject'] = 'Your OTP Code'
-        msg['From'] = settings.EMAIL_HOST_USER
-        msg['To'] = to_email
+        context = {'otp_code': otp_code}
+        html_content = render_to_string('api/otp_email.html', context)
 
-        server = smtplib.SMTP(settings.EMAIL_HOST, settings.EMAIL_PORT)
-        server.starttls()
-        server.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"Email sent successfully to {to_email}")
+        text_content = strip_tags(html_content)
+
+        msg = EmailMessage()
+        msg['Subject'] = 'کد تایید ورود'
+        msg['From'] = settings.EMAIL_HOST_USER
+        msg['To'] = recipient_email
+
+        msg.set_content(text_content)
+        msg.add_alternative(html_content, subtype='html')
+
+        with smtplib.SMTP(settings.EMAIL_HOST, settings.EMAIL_PORT) as server:
+            server.starttls()
+            server.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
+            server.send_message(msg)
+
+        print(f"HTML Email sent successfully to {recipient_email}")
         return True
+
     except Exception as e:
-        print(f"[EMAIL WARNING] Failed to send email to {to_email}: {e}")
+        print(f"[EMAIL WARNING] Failed to send HTML email to {recipient_email}: {e}")
         return False
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def request_otp_view(request):
+    """
+    Requests an OTP (One-Time Password) for an existing and active user to log in.
+
+    This API endpoint initiates the OTP-based login process. It first checks for
+    an active OTP in Redis to prevent spamming. If none exists, it verifies that
+    the user associated with the provided identifier (email or phone number)
+    exists in the database and that their account is active.
+
+    Upon successful validation, a new OTP is generated, stored in Redis with a
+    time-to-live (TTL), and sent to the user's email address if the identifier
+    is an email.
+
+    Request Body (JSON):
+    {
+        "identifier": "user@example.com"
+    }
+    // OR
+    {
+        "identifier": "09123456789"
+    }
+
+    Successful Response (JSON - Status Code: 200 OK):
+    {
+        "status": "success",
+        "message": "An OTP has been sent to {identifier} for login. It is valid for 5 minutes."
+    }
+
+    Error Responses (JSON):
+    - 400 Bad Request: Returned if the request body contains invalid JSON or if the
+      'identifier' field is missing.
+      {"status": "error", "message": "Identifier (email or phone_number) is required."}
+
+    - 403 Forbidden: Returned if the user's account ('profile_status') is inactive.
+      {"status": "error", "message": "Your account is currently inactive. Please contact support."}
+
+    - 404 Not Found: Returned if no user is found with the provided identifier.
+      {"status": "error", "message": "User not found. Please register or check your identifier."}
+
+    - 429 Too Many Requests: Returned if an active OTP has already been sent to this
+      identifier recently. The user must wait until the previous OTP expires.
+      {"status": "error", "message": "An OTP has already been sent to this identifier..."}
+
+    - 500 Internal Server Error: Returned for unexpected database errors or other
+      server-side exceptions.
+      {"status": "error", "message": "A database error occurred while checking user status."}
+
+    - 503 Service Unavailable: Returned if the Redis service is not available.
+      {"status": "error", "message": "Redis service unavailable. Cannot request OTP."}
+    """
     if not redis_client:
         return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot request OTP.'},
                             status=503)
@@ -122,7 +185,7 @@ def request_otp_view(request):
         redis_client.set(name=redis_key, value=otp_code, ex=otp_ttl_seconds)
 
         if is_email_identifier:
-            try_send_email(identifier, otp_code)
+            send_otp_email_html(identifier, otp_code)
 
         print(
             f"Generated OTP for {identifier} (User Active: {user_info_from_db['profile_status']}): {otp_code} (TTL: {otp_ttl_seconds}s)")
