@@ -1000,7 +1000,7 @@ INSERT INTO payments (username, reservation_id, amount_paid, payment_status, dat
 VALUES ('mehdi2121', 101, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
        ('mehdi2121', 102, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
        ('mehdi2121', 103, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
-       ('narges2222', 104, 3000000, 'UNSUCCESSFUL', '2025-04-07 16:30:00', 'WALLET'),
+       ('narges2222', 104, 3000000, 'NOT_PAID', '2025-04-07 16:30:00', 'WALLET'),
        ('narges2222', 104, 3000000, 'SUCCESSFUL', '2025-04-07 20:10:00', 'CREDIT_CARD'),
        ('narges2222', 105, 3000000, 'SUCCESSFUL', '2025-04-07 20:10:00', 'CREDIT_CARD'),
        ('elnaz2828', 106, 3000000, 'SUCCESSFUL', '2025-04-09 02:05:00', 'CREDIT_CARD'),
@@ -1021,9 +1021,9 @@ INSERT INTO payments (username, reservation_id, amount_paid, payment_status, dat
 VALUES
     ('parvaneh4040', 108, 3000000, 'SUCCESSFUL', '2024-04-06 12:00:00', 'WALLET');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
-VALUES ('parvaneh4040', 108, '2024-04-06 12:00:00', 'BUY', 'SUCCESSFUL'),
-       ('parvaneh4040', 108, '2024-04-06 12:10:00', 'CANCEL', 'CANCELED');
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status, cancel_by)
+VALUES ('parvaneh4040', 108, '2024-04-06 12:00:00', 'BUY', 'SUCCESSFUL',null),
+       ('parvaneh4040', 108, '2024-04-06 12:10:00', 'CANCEL', null,'admin1' );
 
 INSERT INTO reports (username, reservation_id, report_type, report_text)
 VALUES ('golnaz3434', 22, 'OTHER', 'test');
@@ -1038,9 +1038,9 @@ values ('mehdi2121', 101, 'CANCEL', 'test', TRUE, FALSE, 'admin1'),
        ('narges2222', 105, 'CANCEL', 'test', TRUE, FALSE, 'admin2'),
        ('narges2222', 109, 'CANCEL', 'test', TRUE, TRUE, 'admin1');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
-VALUES ('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'CANCELED'),
-       ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'CANCELED');
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type,cancel_by)
+VALUES ('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'admin1'),
+       ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'admin1');
 
 
 -- افزودن 30 گزارش
