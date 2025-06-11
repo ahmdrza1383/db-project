@@ -2663,146 +2663,131 @@ def admin_reject_request_view(request, request_id):
 @token_required
 def get_user_bookings_view(request):
     """
-    Retrieves a list of authenticated user's bookings with optional filters.
-    Optimized to return only essential information from reservations, tickets,
-    locations, and reservations history. Vehicle and payment details are minimized.
+    Retrieves the authenticated user's reservation history with extensive filtering options.
 
-    This API allows an authenticated 'USER' to fetch their ticket reservations.
-    Admins are forbidden from using this endpoint.
-    It supports filtering by reservation status (e.g., 'RESERVED', 'CANCELED'),
-    by a date range for the ticket's departure date, and by origin/destination cities.
+    This API uses the 'reservations_history' table as the source of truth, showing a log
+    of all 'BUY' (successful) and 'CANCEL' operations. It allows filtering by:
+    - Final status of the reservation ('RESERVED' or 'CANCELED')
+    - Departure date range for the ticket
+    - Origin and destination cities
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
 
     Request Body (JSON - all fields are optional):
     {
-        "reservation_status": "RESERVED",
+        "status": "RESERVED",             // or "CANCELED"
         "start_departure_date": "YYYY-MM-DD",
         "end_departure_date": "YYYY-MM-DD",
         "origin_city": "Tehran",
-        "destination_city": "Mashhad"
+        "destination_city": "Mashhad",
+        "ticket_id": 123,
+        "reservation_id": 101,
+        "operation_type": "BUY"
     }
 
     Successful Response (JSON - Status Code: 200 OK):
     {
         "status": "success",
-        "count": 2,
+        "count": 1,
         "data": [
             {
+                "history_id": 1,
                 "reservation_id": 101,
                 "ticket_id": 123,
-                "reservation_status": "RESERVED",
-                "reserved_at": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
-                "reservation_seat": 5,
+                "operation_type": "BUY",
+                "operation_status": "SUCCESSFUL",
+                "operation_time": "YYYY-MM-DDTHH:MM:SSZ",
                 "ticket_details": {
                     "origin_city": "Tehran",
                     "destination_city": "Mashhad",
-                    "departure_start": "YYYY-MM-DDTHH:MM:SS",
-                    "departure_end": "YYYY-MM-DDTHH:MM:SS",
-                    "price": 500000,
-                    "vehicle_type": "FLIGHT" // Only vehicle type, no specific vehicle details
-                },
-                "history_info": { // Latest history entry for BUY/CANCEL
-                    "operation_type": "BUY",
-                    "history_status": "SUCCESSFUL",
-                    "date_and_time": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
+                    "departure_start": "YYYY-MM-DDTHH:MM:SS"
                 }
-                // Payment info is removed to simplify output as requested
             }
-            // ... more bookings
         ]
     }
-
     Error Responses (JSON):
-    - 400 Bad Request: Invalid JSON, invalid date format, invalid reservation_status, invalid city names.
-    - 401 Unauthorized: Token missing or invalid.
-    - 403 Forbidden: User is an admin (only regular users can access).
-    - 500 Internal Server Error: Database or unexpected server errors.
+    - 400 Bad Request: Returned under the following conditions:
+        * If the request body contains invalid JSON.
+          {"status": "error", "message": "Invalid JSON format."}
+        * If 'ticket_id' or 'reservation_id' are provided but are not valid integers.
+          {"status": "error", "message": "Invalid ticket_id. Must be an integer."}
+        * If 'operation_type' is provided with a value other than 'BUY' or 'CANCEL'.
+          {"status": "error", "message": "Invalid operation_type. Must be 'BUY' or 'CANCEL'."}
+        * If 'reservation_status' is provided with a value other than 'RESERVED' or 'CANCELED'.
+          {"status": "error", "message": "Invalid reservation_status. Use 'RESERVED' or 'CANCELED'."}
+        * If 'start_departure_date' or 'end_departure_date' have an invalid format.
+          {"status": "error", "message": "Invalid date format. Please use YYYY-MM-DD."}
+
+    - 401 Unauthorized: Returned if the 'Authorization' header is missing or the JWT is invalid.
+      (This is typically handled by the @token_required decorator).
+
+    - 403 Forbidden: Returned if the authenticated user is not a regular user (i.e., has a role other than 'USER').
+      {"status": "error", "message": "Forbidden: Only regular users can view their bookings."}
+
+    - 500 Internal Server Error: Returned for any unexpected database errors or other server-side exceptions.
+      {"status": "error", "message": "A database error occurred while fetching history."}
+      {"status": "error", "message": "An unexpected server error occurred."}
     """
     current_username = request.user_payload.get('sub')
     user_role = request.user_payload.get('role')
 
-    if not current_username:
-        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username missing.'}, status=401)
-
     if user_role != 'USER':
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Forbidden: Only regular users can view their bookings.'
-        }, status=403)
+        return JsonResponse({'status': 'error', 'message': 'Forbidden: Only regular users can view their bookings.'},
+                            status=403)
 
     try:
         data = json.loads(request.body) if request.body else {}
     except json.JSONDecodeError:
-        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
 
     filter_status = data.get('reservation_status')
     start_date_str = data.get('start_departure_date')
     end_date_str = data.get('end_departure_date')
     origin_city = data.get('origin_city')
     destination_city = data.get('destination_city')
+    filter_ticket_id = data.get('ticket_id')
+    filter_reservation_id = data.get('reservation_id')
+    filter_operation_type = data.get('operation_type')
 
-    if filter_status and filter_status.upper() not in ['RESERVED', 'NOT_RESERVED', 'TEMPORARY', 'CANCELED']:
-        return JsonResponse({'status': 'error', 'message': 'Invalid reservation_status provided.'}, status=400)
-
-    start_date = None
-    if start_date_str:
-        try:
+    start_date, end_date = None, None
+    try:
+        if start_date_str:
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-        except ValueError:
-            return JsonResponse(
-                {'status': 'error', 'message': 'Invalid start_departure_date format. Please use YYYY-MM-DD.'},
-                status=400
-            )
-
-    end_date = None
-    if end_date_str:
-        try:
+        if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
-        except ValueError:
-            return JsonResponse(
-                {'status': 'error', 'message': 'Invalid end_departure_date format. Please use YYYY-MM-DD.'},
-                status=400
-            )
+    except ValueError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid date format. Please use YYYY-MM-DD.'}, status=400)
+
     query = """
         SELECT
-            r.reservation_id,
-            r.ticket_id,
-            r.reservation_status,
-            r.date_and_time_of_reservation AS reserved_at,
-            r.reservation_seat,
+            rh.reservation_history_id AS history_id,
+            rh.reservation_id,
+            rh.operation_type,
+            rh.buy_status AS operation_status,
+            rh.date_and_time AS operation_time,
+            res.ticket_id,
             t.departure_start,
-            t.departure_end,
-            t.price,
-            v.vehicle_type, 
             loc_origin.city AS origin_city,
-            loc_dest.city AS destination_city,
-            rh.operation_type AS history_operation_type, rh.buy_status AS history_buy_status, rh.date_and_time AS history_date_and_time
-        FROM reservations r
-        JOIN tickets t ON r.ticket_id = t.ticket_id
-        JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+            loc_dest.city AS destination_city
+        FROM reservations_history rh
+        JOIN reservations res ON rh.reservation_id = res.reservation_id
+        JOIN tickets t ON res.ticket_id = t.ticket_id
         JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
-        JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
-        LEFT JOIN (
-            SELECT
-                rh_inner.reservation_id,
-                rh_inner.operation_type,
-                rh_inner.buy_status,
-                rh_inner.date_and_time,
-                ROW_NUMBER() OVER (PARTITION BY rh_inner.reservation_id ORDER BY rh_inner.date_and_time DESC) as rn
-            FROM reservations_history rh_inner
-        ) rh ON r.reservation_id = rh.reservation_id AND rh.rn = 1
-        WHERE r.username = %s
+        JOIN locations loc_dest ON t.destination_location_id = dest_loc.location_id
+        WHERE rh.username = %s
     """
     params = [current_username]
 
     if filter_status:
-        if filter_status.upper() == 'CANCELED':
-            query += " AND rh.operation_type = 'CANCEL' AND rh.buy_status = 'CANCELED'"
+        status_upper = filter_status.upper()
+        if status_upper == 'RESERVED':
+            query += " AND rh.operation_type = 'BUY' AND rh.buy_status = 'SUCCESSFUL'"
+        elif status_upper == 'CANCELED':
+            query += " AND rh.operation_type = 'CANCEL'"
         else:
-            query += " AND r.reservation_status = %s"
-            params.append(filter_status.upper())
+            return JsonResponse(
+                {'status': 'error', 'message': "Invalid reservation_status. Use 'RESERVED' or 'CANCELED'."}, status=400)
 
     if start_date:
         query += " AND DATE(t.departure_start) >= %s"
@@ -2820,7 +2805,30 @@ def get_user_bookings_view(request):
         query += " AND loc_dest.city ILIKE %s"
         params.append(f"%{destination_city}%")
 
-    query += " ORDER BY t.departure_start DESC, r.date_and_time_of_reservation DESC;"
+    if filter_ticket_id is not None:
+        try:
+            query += " AND res.ticket_id = %s"
+            params.append(int(filter_ticket_id))
+        except (ValueError, TypeError):
+            return JsonResponse({'status': 'error', 'message': 'Invalid ticket_id. Must be an integer.'}, status=400)
+
+    if filter_reservation_id is not None:
+        try:
+            query += " AND rh.reservation_id = %s"
+            params.append(int(filter_reservation_id))
+        except (ValueError, TypeError):
+            return JsonResponse({'status': 'error', 'message': 'Invalid reservation_id. Must be an integer.'},
+                                status=400)
+
+    if filter_operation_type:
+        op_type = filter_operation_type.upper()
+        if op_type not in ['BUY', 'CANCEL']:
+            return JsonResponse({'status': 'error', 'message': "Invalid operation_type. Must be 'BUY' or 'CANCEL'."},
+                                status=400)
+        query += " AND rh.operation_type = %s"
+        params.append(op_type)
+
+    query += " ORDER BY rh.date_and_time DESC;"
 
     try:
         with connection.cursor() as cursor:
@@ -2828,53 +2836,35 @@ def get_user_bookings_view(request):
             rows = cursor.fetchall()
             columns = [col[0] for col in cursor.description]
 
-            user_bookings = []
+            user_history = []
             for row in rows:
-                booking = dict(zip(columns, row))
+                history_entry = dict(zip(columns, row))
 
-                for key in ['reserved_at', 'departure_start', 'departure_end', 'history_date_and_time']:
-                    if booking.get(key) and hasattr(booking[key], 'isoformat'):
-                        booking[key] = booking[key].isoformat()
+                for key in ['operation_time', 'departure_start']:
+                    if history_entry.get(key) and hasattr(history_entry[key], 'isoformat'):
+                        history_entry[key] = history_entry[key].isoformat()
 
-                booking['ticket_details'] = {
-                    'origin_city': booking.pop('origin_city'),
-                    'destination_city': booking.pop('destination_city'),
-                    'departure_start': booking.pop('departure_start'),
-                    'departure_end': booking.pop('departure_end'),
-                    'price': booking.pop('price'),
-                    'vehicle_type': booking.pop('vehicle_type')
+                history_entry['ticket_details'] = {
+                    'origin_city': history_entry.pop('origin_city'),
+                    'destination_city': history_entry.pop('destination_city'),
+                    'departure_start': history_entry.pop('departure_start')
                 }
 
-                history_info = {}
-                if booking.get('history_operation_type') is not None:
-                    history_info = {
-                        'operation_type': booking.pop('history_operation_type'),
-                        'history_status': booking.pop('history_buy_status'),
-                        'date_and_time': booking.pop('history_date_and_time')
-                    }
-                else:
-                    booking.pop('history_operation_type', None)
-                    booking.pop('history_buy_status', None)
-                    booking.pop('history_date_and_time', None)
-
-                booking['history_info'] = history_info
-
-                user_bookings.append(booking)
+                user_history.append(history_entry)
 
         return JsonResponse({
             'status': 'success',
-            'count': len(user_bookings),
-            'data': user_bookings
+            'count': len(user_history),
+            'data': user_history
         }, status=200)
 
     except DatabaseError as e:
         print(f"DatabaseError in get_user_bookings_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred while fetching bookings.'},
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred while fetching history.'},
                             status=500)
     except Exception as e:
         print(f"Unexpected error in get_user_bookings_view: {e.__class__.__name__}: {e}")
-        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
-                            status=500)
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
 
 @csrf_exempt
