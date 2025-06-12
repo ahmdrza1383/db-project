@@ -852,7 +852,11 @@ def search_tickets_view(request):
     Allows users to search for available tickets based on various criteria using a POST request.
 
     Users can search by origin, destination, travel date, and vehicle type.
-    Results are cached in Redis to improve performance for frequent queries.
+    Results are cached in Redis in two layers:
+    1. Search Cache: Stores a list of ticket_ids matching the search filters.
+    2. Ticket Details Cache: Stores full details for each individual ticket_id.
+    This enables efficient cache invalidation for specific tickets.
+
     Optional filters for price, transport company, departure time, and travel class
     are also supported.
 
@@ -990,52 +994,91 @@ def search_tickets_view(request):
             status=400)
 
     cache_key_data = {k: v for k, v in data.items() if v is not None}
-    cache_key = f"search_tickets:{json.dumps(cache_key_data, sort_keys=True)}"
+    search_results_cache_key = f"search_results:{json.dumps(cache_key_data, sort_keys=True)}"
 
-    cached_response = None
+    cached_ticket_ids_json = None
     if redis_client:
         try:
-            cached_data = redis_client.get(cache_key)
-            if cached_data:
-                cached_response = json.loads(cached_data)
-                print(f"Serving search results from cache for key: {cache_key}")
+            cached_ticket_ids_json = redis_client.get(search_results_cache_key)
+        except redis.exceptions.RedisError as e:
+            print(f"Redis error during search results cache lookup for key {search_results_cache_key}: {e}")
+
+    if cached_ticket_ids_json:
+        try:
+            cached_ticket_ids = json.loads(cached_ticket_ids_json)
+            retrieved_tickets_from_cache = []
+            all_from_cache = True
+
+            for tid in cached_ticket_ids:
+                ticket_details_cache_key = f"ticket_details:{tid}"
+                ticket_details_json = redis_client.get(ticket_details_cache_key)
+                if ticket_details_json:
+                    try:
+                        retrieved_tickets_from_cache.append(json.loads(ticket_details_json))
+                    except json.JSONDecodeError:
+                        print(
+                            f"Corrupted ticket details cache for key {ticket_details_cache_key}. Re-fetching from DB.")
+                        all_from_cache = False
+                        break
+                else:
+                    all_from_cache = False
+                    break
+
+            if all_from_cache:
+                print(
+                    f"Serving search results (ticket IDs and details) from Redis cache for key: {search_results_cache_key}")
                 return JsonResponse({
                     'status': 'success',
-                    'data': cached_response,
+                    'data': retrieved_tickets_from_cache,
                     'cached': True
                 })
+        except json.JSONDecodeError:
+            print(f"Corrupted search results cache for key {search_results_cache_key}. Re-fetching from DB.")
         except redis.exceptions.RedisError as e:
-            print(f"Redis error during cache lookup for search_tickets_view: {e}")
+            print(f"Redis error during retrieving individual ticket details from cache: {e}")
+
 
     tickets_data = []
     try:
         with connection.cursor() as cursor:
             base_query = """
-                SELECT
-                    t.ticket_id,
-                    origin_loc.city AS origin_city,
-                    dest_loc.city AS destination_city,
-                    t.departure_start,
-                    t.departure_end,
-                    t.price,
-                    t.remaining_capacity,
-                    v.vehicle_type,
-                    f.airline_name, f.flight_class, f.number_of_stop, f.flight_code, f.origin_airport, f.destination_airport, f.facility AS flight_facility,
-                    tr.train_stars, tr.choosing_a_closed_coupe, tr.facility AS train_facility,
-                    b.company_name, b.bus_type, b.number_of_chairs, b.facility AS bus_facility
-                FROM tickets t
-                INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
-                INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
-                INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
-                LEFT JOIN flights f ON v.vehicle_id = f.vehicle_id AND v.vehicle_type = 'FLIGHT'
-                LEFT JOIN trains tr ON v.vehicle_id = tr.vehicle_id AND v.vehicle_type = 'TRAIN'
-                LEFT JOIN buses b ON v.vehicle_id = b.vehicle_id AND v.vehicle_type = 'BUS'
-                WHERE
-                    origin_loc.city ILIKE %s AND
-                    dest_loc.city ILIKE %s AND
-                    DATE(t.departure_start) = %s AND
-                    t.ticket_status = TRUE
-            """
+                         SELECT t.ticket_id, \
+                                origin_loc.city AS origin_city, \
+                                dest_loc.city   AS destination_city, \
+                                t.departure_start, \
+                                t.departure_end, \
+                                t.price, \
+                                t.remaining_capacity, \
+                                v.vehicle_type, \
+                                f.airline_name, \
+                                f.flight_class, \
+                                f.number_of_stop, \
+                                f.flight_code, \
+                                f.origin_airport, \
+                                f.destination_airport, \
+                                f.facility      AS flight_facility, \
+                                tr.train_stars, \
+                                tr.choosing_a_closed_coupe, \
+                                tr.facility     AS train_facility, \
+                                b.company_name, \
+                                b.bus_type, \
+                                b.number_of_chairs, \
+                                b.facility      AS bus_facility
+                         FROM tickets t
+                                  INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
+                                  INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
+                                  INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+                                  LEFT JOIN flights f ON v.vehicle_id = f.vehicle_id AND v.vehicle_type = 'FLIGHT'
+                                  LEFT JOIN trains tr ON v.vehicle_id = tr.vehicle_id AND v.vehicle_type = 'TRAIN'
+                                  LEFT JOIN buses b ON v.vehicle_id = b.vehicle_id AND v.vehicle_type = 'BUS'
+                         WHERE origin_loc.city ILIKE %s \
+                           AND
+                             dest_loc.city ILIKE %s \
+                           AND
+                             DATE (t.departure_start) = %s \
+                           AND
+                             t.ticket_status = TRUE \
+                         """
             query_params = [origin_city, destination_city, departure_date]
 
             if vehicle_type:
@@ -1078,6 +1121,7 @@ def search_tickets_view(request):
             rows = cursor.fetchall()
             columns = [col[0] for col in cursor.description]
 
+            found_ticket_ids = []
             for row in rows:
                 ticket = dict(zip(columns, row))
 
@@ -1148,6 +1192,7 @@ def search_tickets_view(request):
 
                 ticket['vehicle_details'] = vehicle_details
                 tickets_data.append(ticket)
+                found_ticket_ids.append(ticket['ticket_id'])
 
         response_data = {
             'status': 'success',
@@ -1158,10 +1203,21 @@ def search_tickets_view(request):
         if redis_client:
             try:
                 cache_ttl_seconds = getattr(settings, 'TICKET_SEARCH_CACHE_TTL_SECONDS', 300)
-                redis_client.setex(cache_key, cache_ttl_seconds, json.dumps(tickets_data))
-                print(f"Cached search results for key: {cache_key} with TTL: {cache_ttl_seconds}s")
+
+                redis_client.setex(search_results_cache_key, cache_ttl_seconds, json.dumps(found_ticket_ids))
+                print(
+                    f"Cached search results (ticket IDs) for key: {search_results_cache_key} with TTL: {cache_ttl_seconds}s")
+
+                for ticket_detail in tickets_data:
+                    ticket_details_cache_key = f"ticket_details:{ticket_detail['ticket_id']}"
+                    redis_client.setex(ticket_details_cache_key, cache_ttl_seconds, json.dumps(ticket_detail))
+                    print(
+                        f"Cached individual ticket details for key: {ticket_details_cache_key} with TTL: {cache_ttl_seconds}s")
+
             except redis.exceptions.RedisError as e:
-                print(f"Redis error during caching search results: {e}")
+                print(f"Redis error during caching search results or individual ticket details: {e}")
+            except Exception as e:
+                print(f"Error preparing data for Redis cache in search_tickets_view: {e}")
 
         return JsonResponse(response_data, status=200)
 
@@ -1365,7 +1421,8 @@ def reserve_ticket_view(request):
     Admins are not allowed to reserve tickets via this endpoint.
     Upon successful temporary reservation, a Celery task is scheduled to check
     for reservation expiry after a defined period (e.g., 10 minutes).
-    Also, the temporary reservation details (including ticket_price) are cached in Redis for 10 minutes.
+    Also, the temporary reservation details (including ticket_price and ticket_departure_start)
+    are cached in Redis for 10 minutes.
 
     ***ADDED CHECK: Cannot reserve if ticket departure time is in the past.***
 
@@ -1431,6 +1488,9 @@ def reserve_ticket_view(request):
         reservation_id_to_monitor = None
         expiry_minutes_setting = getattr(settings, 'RESERVATION_EXPIRY_MINUTES', 10)
 
+        ticket_price_from_db = None
+        departure_start_time = None
+
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -1464,9 +1524,9 @@ def reserve_ticket_view(request):
                 find_specific_seat_query = """
                                            SELECT reservation_id, reservation_status, username
                                            FROM reservations
-                                           WHERE ticket_id = %s
+                                           WHERE ticket_id = %s \
                                              AND reservation_seat = %s
-                                               FOR UPDATE;
+                                               FOR UPDATE; \
                                            """
                 cursor.execute(find_specific_seat_query, [ticket_id, seat_number])
                 seat_reservation_info = cursor.fetchone()
@@ -1534,12 +1594,44 @@ def reserve_ticket_view(request):
                     f"Celery task scheduled for reservation_id {reservation_id_to_monitor} to run in {expiry_minutes_setting} minutes.")
 
             if redis_client:
+                ticket_details_cache_key = f"ticket_details:{ticket_id}"
+                try:
+                    cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
+                    if cached_ticket_details_json:
+                        cached_ticket_data = json.loads(cached_ticket_details_json)
+
+                        cached_ticket_data['remaining_capacity'] = new_remaining_capacity
+
+                        current_ttl = redis_client.ttl(ticket_details_cache_key)
+                        if current_ttl > 0:
+                            redis_client.setex(
+                                ticket_details_cache_key,
+                                current_ttl,
+                                json.dumps(cached_ticket_data)
+                            )
+                            print(
+                                f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
+                        else:
+                            redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
+                            print(
+                                f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
+                    else:
+                        print(
+                            f"Ticket details for {ticket_id} not found in cache during reservation. Not updating cache.")
+
+                except redis.exceptions.RedisError as re_cache_err:
+                    print(f"Redis error during updating ticket details cache: {re_cache_err}")
+                except Exception as e:
+                    print(f"Error processing ticket details cache in reserve_ticket_view: {e}")
+
+            if redis_client:
                 redis_key = f"temp_reservation:{reservation_id_to_monitor}"
 
                 reservation_for_cache = reservation_outcome_details.copy()
                 reservation_for_cache['expires_in_minutes'] = expiry_minutes_setting
                 reservation_for_cache['ticket_price'] = ticket_price_from_db
-                reservation_for_cache['ticket_departure_start'] = departure_start_time.isoformat()
+                reservation_for_cache[
+                    'ticket_departure_start'] = departure_start_time.isoformat()
 
                 try:
                     redis_client.setex(
@@ -1548,7 +1640,7 @@ def reserve_ticket_view(request):
                         json.dumps(reservation_for_cache)
                     )
                     print(
-                        f"Temporary reservation {reservation_id_to_monitor} cached in Redis for {expiry_minutes_setting} minutes with price {ticket_price_from_db}.")
+                        f"Temporary reservation {reservation_id_to_monitor} cached in Redis for {expiry_minutes_setting} minutes with price {ticket_price_from_db} and departure {departure_start_time.isoformat()}.")
                 except redis.exceptions.RedisError as re_cache_err:
                     print(f"Redis error during temporary reservation caching: {re_cache_err}")
                 except Exception as e:
@@ -1673,117 +1765,6 @@ class CancelReservationView(APIView):
             return Response({'status': 'error', 'message': 'An unexpected error occurred.'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @method_decorator(csrf_exempt)
-    @method_decorator(token_required)
-    def post(self, request, reservation_id):
-        """
-        Confirms the cancellation of a reservation.
-
-        This method performs the actual cancellation for the authenticated user.
-        All database operations are executed within a single atomic transaction
-        to ensure data integrity.
-        The process involves:
-        1. Verifying ownership and cancellable status of the reservation again.
-        2. Re-calculating the penalty and the final refund amount.
-        3. Adding the refund amount to the user's wallet balance.
-        4. Reverting the reservation status to 'NOT_RESERVED' and clearing the user link.
-        5. Incrementing the ticket's remaining capacity by one.
-        6. Creating a 'CANCEL' record in the reservations_history table.
-
-        Path Parameter:
-            reservation_id (int): The unique identifier for the reservation to be canceled.
-
-        Request Headers:
-            Authorization: Bearer <JWT_access_token>
-
-        Successful Response (JSON - Status Code: 200 OK):
-        {
-            "status": "success",
-            "message": "Reservation successfully canceled.",
-            "refund_details": {
-                "refund_amount": 450000,
-                "new_wallet_balance": 1500000
-            }
-        }
-
-        Error Responses (JSON):
-        - Same error responses as the GET method apply here.
-        """
-        current_username = request.user_payload.get('sub')
-
-        try:
-            with transaction.atomic():
-                with connection.cursor() as cursor:
-                    query = """
-                        SELECT
-                            r.username, r.ticket_id, r.reservation_status,
-                            t.departure_start, t.price, u.wallet_balance
-                        FROM reservations r
-                        INNER JOIN tickets t ON r.ticket_id = t.ticket_id
-                        INNER JOIN users u ON r.username = u.username
-                        WHERE r.reservation_id = %s FOR UPDATE OF r, t, u;
-                    """
-                    cursor.execute(query, [reservation_id])
-                    data_for_cancellation = cursor.fetchone()
-
-                    if not data_for_cancellation:
-                        return Response({'status': 'error', 'message': 'Reservation not found.'},
-                                        status=status.HTTP_404_NOT_FOUND)
-
-                    res_username, ticket_id, res_status, departure_start, ticket_price, current_wallet_balance = data_for_cancellation
-
-                    if res_username != current_username:
-                        return Response(
-                            {'status': 'error', 'message': 'Forbidden: You can only cancel your own reservations.'},
-                            status=status.HTTP_403_FORBIDDEN)
-
-                    if res_status != 'RESERVED':
-                        return Response({'status': 'error',
-                                         'message': f'Reservation cannot be canceled. Current status: {res_status}'},
-                                        status=status.HTTP_409_CONFLICT)
-
-                    if departure_start <= datetime.now():
-                        return Response(
-                            {'status': 'error', 'message': 'Cannot cancel a ticket after its departure time.'},
-                            status=status.HTTP_409_CONFLICT)
-
-                    time_remaining_hours = (departure_start - datetime.now()).total_seconds() / 3600
-                    penalty_percentage = 10 if time_remaining_hours > 1 else 50
-                    penalty_amount = (ticket_price * penalty_percentage) / 100
-                    refund_amount = ticket_price - penalty_amount
-
-                    new_wallet_balance = current_wallet_balance + refund_amount
-                    cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
-                                   [new_wallet_balance, current_username])
-
-                    cursor.execute(
-                        "UPDATE reservations SET reservation_status = 'NOT_RESERVED', username = NULL, date_and_time_of_reservation = NULL WHERE reservation_id = %s;",
-                        [reservation_id])
-
-                    cursor.execute(
-                        "UPDATE tickets SET remaining_capacity = remaining_capacity + 1 WHERE ticket_id = %s;",
-                        [ticket_id])
-
-                    cursor.execute(
-                        """
-                        INSERT INTO reservations_history (username, reservation_id, operation_type, cancel_by)
-                        VALUES (%s, %s, 'CANCEL', %s);
-                        """,
-                        [current_username, reservation_id, current_username]
-                    )
-            return Response({
-                'status': 'success',
-                'message': 'Reservation successfully canceled.',
-                'refund_details': {
-                    'refund_amount': int(refund_amount),
-                    'new_wallet_balance': int(new_wallet_balance)
-                }
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            print(f"Error in POST CancellationView: {e}")
-            return Response({'status': 'error', 'message': 'An unexpected error occurred during cancellation.'},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class CreateRequestView(APIView):
@@ -2490,6 +2471,8 @@ def admin_approve_request_view(request, request_id):
     If the request is for 'CANCEL', it calculates the penalty based on the time
     the user submitted the request, refunds the appropriate amount to the user's
     wallet, frees up the reserved seat, and logs the action in the history.
+    Crucially, it also UPDATES the `ticket_details` cache in Redis for the affected ticket
+    to reflect changes like `remaining_capacity`, without changing its TTL.
     The logic for 'CHANGE_DATE' requests should also be handled here if implemented.
 
     Path Parameter:
@@ -2522,16 +2505,23 @@ def admin_approve_request_view(request, request_id):
         with transaction.atomic():
             with connection.cursor() as cursor:
                 query = """
-                    SELECT
-                        req.request_id, req.request_subject, req.date_and_time AS requested_at,
-                        req.is_checked, res.reservation_id, res.ticket_id, 
-                        res.username AS user_username, t.departure_start, t.price, u.wallet_balance
-                    FROM requests req
-                    JOIN reservations res ON req.reservation_id = res.reservation_id
-                    JOIN tickets t ON res.ticket_id = t.ticket_id
-                    JOIN users u ON res.username = u.username
-                    WHERE req.request_id = %s FOR UPDATE OF req, res, t, u;
-                """
+                        SELECT req.request_id, \
+                               req.request_subject, \
+                               req.date_and_time AS requested_at, \
+                               req.is_checked, \
+                               res.reservation_id, \
+                               res.ticket_id, \
+                               res.username      AS user_username, \
+                               t.departure_start, \
+                               t.price, \
+                               u.wallet_balance, \
+                               t.remaining_capacity 
+                        FROM requests req
+                                 JOIN reservations res ON req.reservation_id = res.reservation_id
+                                 JOIN tickets t ON res.ticket_id = t.ticket_id
+                                 JOIN users u ON res.username = u.username
+                        WHERE req.request_id = %s FOR UPDATE OF req, res, t, u; \
+                        """
                 cursor.execute(query, [request_id])
                 request_data = cursor.fetchone()
 
@@ -2547,7 +2537,12 @@ def admin_approve_request_view(request, request_id):
                                         status=409)
 
                 departure_start_time = data_dict['departure_start']
-                if departure_start_time <= datetime.now():
+                if departure_start_time.tzinfo is None:
+                    departure_start_time = departure_start_time.replace(tzinfo=timezone.utc)
+
+                now_utc = datetime.now(timezone.utc)
+
+                if departure_start_time <= now_utc:
                     cursor.execute(
                         "UPDATE requests SET is_checked = TRUE, is_accepted = FALSE, check_by = %s WHERE request_id = %s;",
                         [admin_username, request_id])
@@ -2559,34 +2554,84 @@ def admin_approve_request_view(request, request_id):
 
                 user_to_update = data_dict['user_username']
                 message = ""
-                if data_dict['request_subject'] == 'CANCEL':
-                    time_to_departure = data_dict['departure_start'] - data_dict['requested_at']
-                    time_remaining_hours = time_to_departure.total_seconds() / 3600
 
-                    penalty_percentage = 10 if time_remaining_hours > 1 else 50
+                current_remaining_capacity = data_dict['remaining_capacity']
+
+                if data_dict['request_subject'] == 'CANCEL':
+                    request_submit_time = data_dict['requested_at']
+                    if request_submit_time.tzinfo is None:
+                        request_submit_time = request_submit_time.replace(tzinfo=timezone.utc)
+
+                    time_to_departure_from_request_submit = (
+                                                                        departure_start_time - request_submit_time).total_seconds() / 3600
+
+                    penalty_percentage = 10 if time_to_departure_from_request_submit > 1 else 50
                     penalty_amount = (data_dict['price'] * penalty_percentage) / 100
                     refund_amount = data_dict['price'] - penalty_amount
 
                     new_wallet_balance = data_dict['wallet_balance'] + refund_amount
                     cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
                                    [new_wallet_balance, user_to_update])
-                    # update user profile in redis
                     if redis_client:
-                        invalidate_user_profile_cache(user_to_update)
-                        get_user_profile(user_to_update)
+                        try:
+                            invalidate_user_profile_cache(user_to_update)
+                            get_user_profile(user_to_update)
+                            print(
+                                f"User profile cache forcefully updated for '{user_to_update}' after cancellation refund.")
+                        except redis.exceptions.RedisError as re_cache_err:
+                            print(f"Redis error during user profile cache update after refund: {re_cache_err}")
+                        except Exception as e:
+                            print(f"Error processing user profile cache in admin_approve_request_view: {e}")
 
                     cursor.execute(
                         "UPDATE reservations SET reservation_status = 'NOT_RESERVED', username = NULL, date_and_time_of_reservation = NULL WHERE reservation_id = %s;",
                         [data_dict['reservation_id']])
+
+                    new_remaining_capacity = current_remaining_capacity + 1
                     cursor.execute(
-                        "UPDATE tickets SET remaining_capacity = remaining_capacity + 1 WHERE ticket_id = %s;",
-                        [data_dict['ticket_id']])
+                        "UPDATE tickets SET remaining_capacity = %s WHERE ticket_id = %s;",
+                        [new_remaining_capacity, data_dict['ticket_id']])
+
+                    if redis_client:
+                        ticket_details_cache_key = f"ticket_details:{data_dict['ticket_id']}"
+                        try:
+                            cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
+                            if cached_ticket_details_json:
+                                cached_ticket_data = json.loads(cached_ticket_details_json)
+
+                                cached_ticket_data['remaining_capacity'] = new_remaining_capacity
+
+                                current_ttl = redis_client.ttl(ticket_details_cache_key)
+                                if current_ttl > 0:
+                                    redis_client.setex(
+                                        ticket_details_cache_key,
+                                        current_ttl,
+                                        json.dumps(cached_ticket_data)
+                                    )
+                                    print(
+                                        f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
+                                else:
+                                    redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
+                                    print(
+                                        f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
+                            else:
+                                print(
+                                    f"Ticket details for {data_dict['ticket_id']} not found in cache during cancellation. Not updating cache.")
+
+                        except redis.exceptions.RedisError as re_cache_err:
+                            print(
+                                f"Redis error during updating ticket details cache in admin_approve_request_view: {re_cache_err}")
+                        except Exception as e:
+                            print(f"Error processing ticket details cache in admin_approve_request_view: {e}")
+
                     cursor.execute(
                         """
-                        INSERT INTO reservations_history (username, reservation_id, operation_type, cancel_by)
-                        VALUES (%s, %s, 'CANCEL', %s);
+                        INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type,
+                                                          buy_status, cancel_by)
+                        VALUES (%s, %s, %s, 'CANCEL', NULL , %s);
                         """,
-                        [data_dict['user_username'], data_dict['reservation_id'], admin_username]
+                        [data_dict['user_username'], data_dict['reservation_id'], datetime.now(timezone.utc),
+                         admin_username]
                     )
 
                     message = f"Cancellation approved. {int(refund_amount)} has been refunded to the user's wallet."
@@ -2784,7 +2829,7 @@ def get_user_bookings_view(request):
         JOIN reservations res ON rh.reservation_id = res.reservation_id
         JOIN tickets t ON res.ticket_id = t.ticket_id
         JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
-        JOIN locations loc_dest ON t.destination_location_id = dest_loc.location_id
+        JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
         WHERE rh.username = %s
     """
     params = [current_username]
