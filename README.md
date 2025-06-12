@@ -1086,3 +1086,871 @@ COMMIT;
 چرا reports: برای شمارش گزارش‌ها.  
 چرا LEFT JOIN: برای شامل کردن کاربران بدون گزارش.  
 چرا refcursor: برای برگردوندن نتیجه به‌صورت جدول.
+
+# فاز 3 پروژه
+این پروژه یک برنامه بک‌اند مبتنی بر جنگو برای یک سیستم خرید بلیط است که از PostgreSQL به عنوان پایگاه داده اصلی و Redis برای کشینگ و مدیریت OTP استفاده می‌کند. Celery نیز برای وظایف ناهمگام به کار گرفته شده است.
+
+## 1. نحوه راه‌اندازی و اجرای سرور بک‌اند
+
+برای راه‌اندازی و اجرای سرور بک‌اند، مراحل زیر را دنبال کنید:
+
+### پیش‌نیازها
+
+* Docker و Docker Compose نصب شده باشند.
+* (اختیاری، برای توسعه محلی پایتون) پایتون 3.9+ و `pip`.
+
+### مراحل راه‌اندازی
+
+1.  **کلون کردن مخزن:**
+    ```bash
+    git clone <your-repository-url>
+    cd db-project-phase3
+    ```
+
+2.  **ساخت و اجرای کانتینرهای Docker:**
+    این دستور ایمیج‌های Docker را برای برنامه وب و Celery worker شما می‌سازد و تمام سرویس‌های تعریف شده در `docker-compose.yml` (web, db, redis, celery) را راه‌اندازی می‌کند.
+    ```bash
+    docker-compose up --build -d
+    ```
+    * `--build`: قبل از شروع کانتینرها، ایمیج‌ها را می‌سازد (برای اولین اجرا یا در صورت تغییر `Dockerfile` لازم است).
+    * `-d`: کانتینرها را در حالت جدا (در پس‌زمینه) اجرا می‌کند.
+
+3.  **اعمال مایگریشن‌های پایگاه داده:**
+    هنگامی که سرویس `db` سالم شد، مایگریشن‌های جنگو را اعمال کنید. باید این دستور را درون کانتینر `web` اجرا کنید.
+    ```bash
+    docker-compose exec web python manage.py migrate
+    ```
+
+4.  **بارگذاری داده‌های اولیه (اختیاری اما برای تست توصیه می‌شود):**
+    اگر فایل `dummy_data.sql` با داده‌های اولیه دارید، می‌توانید آن را در کانتینر PostgreSQL خود بارگذاری کنید.
+    ```bash
+    docker-compose exec db psql -U postgres -d mydatabase -f /code/dummy_data.sql
+    ```
+    (توجه: مسیر `psql` و آرگومان‌ها ممکن است بسته به ایمیج PostgreSQL شما کمی متفاوت باشد. `/code/dummy_data.sql` فرض می‌کند `dummy_data.sql` در ریشه پروژه شما است و طبق `docker-compose.yml` به `/code` درون کانتینر mount شده است).
+
+5.  **ایجاد یک سوپریوزر (اختیاری، برای دسترسی به پنل ادمین جنگو):**
+    ```bash
+    docker-compose exec web python manage.py createsuperuser
+    ```
+    برای ایجاد یک کاربر ادمین، دستورات را دنبال کنید.
+
+### دسترسی به سرور
+
+سرور بک‌اند جنگو در آدرس `http://localhost:8000` اجرا خواهد شد.
+
+* **پنل ادمین جنگو:** `http://localhost:8000/admin/`
+* **مستندات API (Swagger UI):** `http://localhost:8000/api/docs/`
+* **نوار ابزار دیباگ:** در صورت `True` بودن `DEBUG` در `settings.py` قابل دسترسی است (که به طور پیش‌فرض در حالت توسعه `True` است).
+
+### توقف سرور
+
+برای توقف تمام کانتینرهای Docker در حال اجرا:
+```bash
+docker-compose down
+```
+## 2. نحوه اتصال به پایگاه داده و تنظیمات Redis
+این پروژه از PostgreSQL برای ذخیره‌سازی داده‌های پایدار و از Redis برای کشینگ (پروفایل‌های کاربر، نتایج جستجوی بلیط) و مدیریت OTP استفاده می‌کند.
+
+### پیکربندی PostgreSQL
+* نام سرویس: db
+
+* ایمیج: postgres:17-alpine
+
+* نام پایگاه داده: mydatabase
+
+* کاربر: postgres
+
+* رمز عبور: 1234 
+
+* نگاشت پورت: 5433:5432 (هاست:کانتینر)
+
+* ولوم داده: postgres_data (برای داده‌های پایدار)
+
+* pg_hba.conf: فایل pg_hba.conf برای اجازه اتصال از تمام هاست‌ها (0.0.0.0/0 و ::/0) با استفاده از متد trust mount شده است که تنظیمات توسعه محلی را ساده می‌کند. توجه: در محیط تولید، این باید با متدهای احراز هویت محدودکننده‌تر پیکربندی شود.
+
+## بخش مربوطه در docker-compose.yml
+```bash
+db:
+  image: postgres:17-alpine
+  restart: always
+  container_name: mydatabase
+  environment:
+    - POSTGRES_USER=postgres
+    - POSTGRES_DB=mydatabase
+    - POSTGRES_PASSWORD=1234
+  volumes:
+    - postgres_data:/var/lib/postgresql/data
+    - ./pg_hba.conf:/etc/postgresql/pg_hba.conf
+  ports:
+    - "5433:5432"
+  command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+  ```
+
+خود فایل pg_hba.conf شامل موارد زیر است:
+
+## TYPE  DATABASE        USER            ADDRESS                 METHOD
+```bash
+local   all             all                                     trust
+host    all             all             0.0.0.0/0               trust
+host    all             all             ::/0                    trust
+```
+## پیکربندی Redis
+* نام سرویس: redis
+
+* ایمیج: redis:7-alpine
+
+* نگاشت پورت: 6379:6379 (هاست:کانتینر)
+
+* ولوم داده: redis_data (برای داده‌های پایدار، هرچند Redis در اینجا عمدتاً به عنوان کش استفاده می‌شود)
+
+
+## بخش مربوطه در docker-compose.yml
+```
+redis:
+  image: redis:7-alpine
+  container_name: myredis
+  restart: always
+  ports:
+     "6379:6379"
+  volumes:
+     redis_data:/data
+```
+## تنظیمات جنگو
+فایل config/settings.py پارامترهای اتصال برای PostgreSQL و Redis را تعریف می‌کند و مقادیر را از متغیرهای محیطی تنظیم شده در docker-compose.yml می‌گیرد.
+
+## بخش مربوطه در config/settings.py
+```
+REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('POSTGRES_DB', 'mydatabase'),
+        'USER': os.environ.get('POSTGRES_USER', 'postgres'),
+        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
+        'HOST': os.environ.get('POSTGRES_HOST', 'db'),
+        'PORT': os.environ.get('POSTGRES_PORT', 5432),
+    }
+}
+
+CELERY_BROKER_URL = 'redis://redis:6379/0'
+```
+## 3. لیست تمام APIها و توضیحات ورودی/خروجی
+این بخش نقاط پایانی API موجود، متدهای HTTP آن‌ها، بدنه درخواست مورد انتظار (JSON) و پاسخ‌های معمول را تشریح می‌کند.
+
+URL پایه برای تمام نقاط پایانی API: http://localhost:8000/api-test/
+
+### 1. درخواست OTP
+* URL: request-otp/
+* متد: POST
+* توضیحات: فرآیند ورود مبتنی بر OTP را برای یک کاربر موجود و فعال با ارسال OTP به ایمیل یا شماره تلفن آن‌ها آغاز می‌کند.
+### مثال بدنه درخواست:
+```
+{
+    "identifier": "user@example.com"
+}
+// یا
+{
+    "identifier": "09123456789"
+}
+```
+### پاسخ موفقیت‌آمیز (200 OK):
+```
+{
+    "status": "success",
+    "message": "یک OTP برای {identifier} جهت ورود ارسال شده است. این کد برای 5 دقیقه معتبر است."
+}
+```
+### پاسخ‌های خطا (مثال‌ها):
+* 400 Bad Request: {"status": "error", "message": "شناسه (ایمیل یا شماره تلفن) الزامی است."}
+* 403 Forbidden: {"status": "error", "message": "حساب کاربری شما در حال حاضر غیرفعال است. لطفا با پشتیبانی تماس بگیرید."}
+* 404 Not Found: {"status": "error", "message": "کاربر یافت نشد. لطفا ثبت نام کنید یا شناسه خود را بررسی کنید."}
+* 429 Too Many Requests: {"status": "error", "message": "یک OTP قبلاً به این شناسه ارسال شده است..."}
+* 503 Service Unavailable: {"status": "error", "message": "سرویس Redis در دسترس نیست. امکان درخواست OTP وجود ندارد."}
+## 2. تایید OTP
+* URL: verify-otp/
+* متد: POST
+* توضیحات: کد OTP ارائه شده را برای ورود تایید می‌کند و در صورت موفقیت، توکن‌های JWT را برمی‌گرداند.
+### مثال بدنه درخواست:
+```
+{
+    "identifier": "user@example.com",
+    "otp_code": "123456"
+}
+```
+### پاسخ موفقیت‌آمیز (200 OK):
+```
+{
+    "status": "success",
+    "message": "ورود موفقیت‌آمیز بود! OTP تایید شد.",
+    "access_token": "<JWT_access_token_string>",
+    "refresh_token": "<JWT_refresh_token_string>",
+    "user_info": {
+        "username": "<نام کاربری>",
+        "name": "<نام کاربر یا null>",
+        "email": "<ایمیل کاربر یا null>",
+        "phone_number": "<شماره تلفن کاربر یا null>",
+        "role": "<نقش کاربر>"
+    }
+}
+```
+### پاسخ‌های خطا (مثال‌ها):
+* 400 Bad Request: {"status": "error", "message": "کد OTP نامعتبر است."}
+* 404 Not Found: {"status": "error", "message": "کاربر یافت نشد، با وجود OTP معتبر. لطفا با پشتیبانی تماس بگیرید."}
+* 503 Service Unavailable: {"status": "error", "message": "سرویس Redis در دسترس نیست. امکان تایید OTP وجود ندارد."}
+## 3. ثبت نام کاربر
+URL: user-signup/
+
+متد: POST
+
+توضیحات: یک کاربر جدید را در سیستم ثبت نام می‌کند.
+
+### مثال بدنه درخواست:
+```
+{
+    "username": "newuser",
+    "password": "SecurePassword123!",
+    "email": "user@example.com",
+    "name": "Test User",
+    "phone_number": "09123456789" // اختیاری
+}
+```
+### پاسخ موفقیت‌آمیز (201 Created):
+```
+{
+    "status": "success",
+    "message": "کاربر با موفقیت ثبت نام شد!",
+    "access_token": "<JWT_access_token_string>",
+    "refresh_token": "<JWT_refresh_token_string>",
+    "user_info": {
+        "username": "newuser",
+        "email": "user@example.com",
+        "name": "Test User",
+        "role": "USER"
+    }
+}
+```
+### پاسخ‌های خطا (مثال‌ها):
+* 400 Bad Request: {"status": "error", "message": "فیلدهای الزامی از دست رفته: [نام فیلدها]"}
+* 409 Conflict: {"status": "error", "message": "این نام کاربری قبلاً گرفته شده است. لطفا نام دیگری را انتخاب کنید."}
+## 4. به‌روزرسانی پروفایل کاربر  
+**URL:** `user-update-profile/`  
+**متد:** `PATCH`  
+
+**توضیحات:**  
+به یک کاربر احراز هویت‌شده اجازه می‌دهد تا جزئیات پروفایل خود را به‌روزرسانی کند. این جزئیات می‌توانند شامل نام، نام کاربری، ایمیل، رمز عبور، شماره تلفن، تاریخ تولد، شناسه شهر، روش احراز هویت، و افزایش موجودی کیف پول باشند.
+
+**احراز هویت:**  
+ارسال توکن `Bearer` در هدر درخواست الزامی است.
+
+---
+
+### مثال بدنه درخواست:
+```json
+{
+    "name": "New Full Name",
+    "new_username": "new_unique_username123",
+    "new_password": "aVeryStrongPassword!@#",
+    "new_email": "new.email.unique@example.com",
+    "phone_number": "09123456780",
+    "date_of_birth": "1990-01-01",
+    "city_id": 10,
+    "new_authentication_method": "PHONE_NUMBER",
+    "add_to_wallet_balance": 50000
+}
+```
+
+---
+
+### پاسخ موفقیت‌آمیز (200 OK):
+```json
+{
+    "status": "success",
+    "message": "پروفایل با موفقیت به‌روزرسانی شد.",
+    "access_token": "<new_jwt_access_token_if_needed>",
+    "refresh_token": "<new_jwt_refresh_token_if_needed>",
+    "user_info": {
+        "username": "current_or_new_username",
+        "name": "New Full Name",
+        "email": "current_or_new_email@example.com",
+        "phone_number": "09123456780",
+        "date_of_birth": "1990-01-01",
+        "city_id": 10,
+        "authentication_method": "PHONE_NUMBER",
+        "role": "USER",
+        "wallet_balance": 1500000
+    }
+}
+```
+
+---
+
+### پاسخ‌های خطا (مثال‌ها):
+
+- **400 Bad Request**:  
+  ```json
+  {"status": "error", "message": "نام نمی‌تواند خالی یا null باشد."}
+  ```
+
+- **401 Unauthorized**:  
+  توکن از دست رفته یا نامعتبر است.
+
+- **409 Conflict**:  
+  ```json
+  {"status": "error", "message": "این نام کاربری قبلاً گرفته شده است."}
+  ```
+
+# API مستندات سامانه بلیط
+
+## 5. دریافت لیست شهرها
+
+- **URL:** `cities-list/`
+- **Method:** GET
+- **Description:** لیستی از تمام شهرها و استان‌های موجود در سیستم را بازیابی می‌کند.
+
+###  پاسخ موفقیت‌آمیز (200 OK)
+```json
+{
+    "status": "success",
+    "data": [
+        {
+            "location_id": 1,
+            "city": "Tehran",
+            "province": "Tehran"
+        },
+        {
+            "location_id": 2,
+            "city": "Mashhad",
+            "province": "Razavi Khorasan"
+        }
+    ]
+}
+```
+
+###  پاسخ‌های خطا
+- **500 Internal Server Error**
+```json
+{"status": "error", "message": "خطای پایگاه داده هنگام دریافت شهرها رخ داد."}
+```
+
+---
+
+## 6. جستجوی بلیط‌ها
+
+- **URL:** `search-tickets/`
+- **Method:** POST
+- **Description:** جستجوی بلیط با فیلترهای مختلف
+
+###  بدنه درخواست
+```json
+{
+    "origin_city": "Tehran",
+    "destination_city": "Mashhad",
+    "departure_date": "2025-06-15",
+    "vehicle_type": "FLIGHT",
+    "min_price": 100000,
+    "max_price": 500000,
+    "company_name": "Mahan Air",
+    "min_departure_time": "08:00",
+    "max_departure_time": "18:00",
+    "flight_class": "Economy",
+    "train_stars": 4,
+    "bus_type": "VIP"
+}
+```
+
+###  پاسخ موفقیت‌آمیز (200 OK)
+```json
+{
+    "status": "success",
+    "data": [
+        {
+            "ticket_id": 1,
+            "origin_city": "Tehran",
+            "destination_city": "Mashhad",
+            "departure_start": "YYYY-MM-DDTHH:MM:SS",
+            "departure_end": "YYYY-MM-DDTHH:MM:SS",
+            "price": 500000,
+            "remaining_capacity": 20,
+            "vehicle_type": "FLIGHT",
+            "vehicle_details": {
+                "airline_name": "Mahan Air",
+                "flight_class": "Economy",
+                "number_of_stop": 0,
+                "flight_code": "IR-1234",
+                "origin_airport": "Mehrabad",
+                "destination_airport": "Mashhad",
+                "facility": {"meal": true}
+            }
+        }
+    ],
+    "cached": true
+}
+```
+
+###  پاسخ‌های خطا
+```json
+{"status": "error", "message": "پارامترهای الزامی از دست رفته: origin_city, destination_city, departure_date"}
+{"status": "error", "message": "فرمت departure_date نامعتبر است. لطفا از فرمت YYYY-MM-DD استفاده کنید."}
+```
+
+---
+
+## 7. دریافت جزئیات بلیط
+
+- **URL:** `ticket-details/<int:ticket_id>/`
+- **Method:** GET
+- **Description:** اطلاعات کامل بلیط
+
+###  پاسخ موفقیت‌آمیز (200 OK)
+```json
+{
+    "status": "success",
+    "data": {
+        "ticket_id": 1,
+        "departure_start": "YYYY-MM-DDTHH:MM:SSZ",
+        "departure_end": "YYYY-MM-DDTHH:MM:SSZ",
+        "price": 500000,
+        "total_capacity": 50,
+        "remaining_capacity": 25,
+        "ticket_status": true,
+        "is_round_trip": false,
+        "return_start": null,
+        "return_end": null,
+        "origin_city": "Tehran",
+        "origin_province": "Tehran",
+        "destination_city": "Mashhad",
+        "destination_province": "Razavi Khorasan",
+        "vehicle_type": "TRAIN",
+        "vehicle_details": {},
+        "reservations": [
+            {
+                "reservation_id": 101,
+                "reservation_status": "TEMPORARY",
+                "reservation_seat": 5
+            }
+        ]
+    }
+}
+```
+
+###  پاسخ‌های خطا
+```json
+{"status": "error", "message": "بلیط یافت نشد."}
+```
+
+---
+
+## 8. رزرو بلیط
+
+- **URL:** `reserve-ticket/`
+- **Method:** POST
+- **Authentication:** Bearer Token (USER role)
+- **Description:** رزرو موقت یک صندلی
+
+###  بدنه درخواست
+```json
+{
+    "ticket_id": 123,
+    "seat_number": 5
+}
+```
+
+###  پاسخ موفقیت‌آمیز (200 OK)
+```json
+{
+    "status": "success",
+    "message": "صندلی با موفقیت به صورت موقت رزرو شد. بررسی انقضا برنامه‌ریزی شد.",
+    "reservation": {
+        "reservation_id": 101,
+        "ticket_id": 123,
+        "seat_number": 5,
+        "status": "TEMPORARY",
+        "username": "currentuser",
+        "reserved_at": "YYYY-MM-DDTHH:MM:SS.ffffffZ",
+        "expires_in_minutes": 10
+    }
+}
+```
+
+###  پاسخ‌های خطا
+```json
+{"status": "error", "message": "ممنوع: فقط کاربران عادی می‌توانند بلیط رزرو کنند."}
+{"status": "error", "message": "امکان رزرو بلیط برای سفری که قبلاً شروع شده یا گذشته است وجود ندارد."}
+{"status": "error", "message": "ظرفیت باقی‌مانده برای بلیط با شناسه {id} وجود ندارد."}
+```
+
+---
+
+## 9. لغو رزرو (بررسی سیاست)
+
+- **URL:** `reservations/<int:reservation_id>/cancel/`
+- **Method:** GET
+- **Authentication:** Bearer Token
+
+###  پاسخ موفقیت‌آمیز (200 OK)
+```json
+{
+    "status": "success",
+    "cancellation_info": {
+        "reservation_id": 101,
+        "ticket_price": 500000,
+        "time_to_departure_hours": 25.5,
+        "penalty_percentage": 10,
+        "penalty_amount": 50000,
+        "refund_amount": 450000
+    }
+}
+```
+
+###  پاسخ‌های خطا
+```json
+{"status": "error", "message": "ممنوع: شما فقط می‌توانید رزروهای خود را بررسی کنید."}
+{"status": "error", "message": "رزرو نمی‌تواند لغو شود. وضعیت فعلی: {status}"}
+```
+
+---
+
+## 10. ایجاد درخواست (لغو یا تغییر تاریخ)
+
+- **URL:** `reservations/<int:reservation_id>/requests/`
+- **Method:** POST
+- **Authentication:** Bearer Token
+
+###  بدنه درخواست
+```json
+{
+    "request_subject": "CANCEL",
+    "request_text": "من باید این سفر را به دلیل یک اورژانس خانوادگی لغو کنم."
+}
+```
+
+###  پاسخ موفقیت‌آمیز (201 Created)
+```json
+{
+    "status": "success",
+    "message": "درخواست شما با موفقیت ارسال شد و در انتظار بررسی است.",
+    "request_details": {
+        "request_id": 1,
+        "reservation_id": 101,
+        "request_subject": "CANCEL",
+        "request_text": "من باید این سفر را به دلیل یک اورژانس خانوادگی لغو کنم."
+    }
+}
+```
+
+###  پاسخ‌های خطا
+```json
+{"status": "error", "message": "هم 'request_subject' و هم 'request_text' الزامی هستند."}
+{"status": "error", "message": "ممنوع: شما مالک این رزرو نیستید."}
+{"status": "error", "message": "امکان ایجاد درخواست برای بلیطی که زمان حرکت آن گذشته است وجود ندارد."}
+```
+
+---
+
+## 11. پرداخت بلیط‌ها
+
+- **URL:** `pay-tickets/`
+- **Method:** POST
+- **Authentication:** Bearer Token
+
+###  بدنه درخواست
+```json
+{
+    "reservation_id": 101,
+    "payment_method": "WALLET",
+    "payment_status": "SUCCESSFUL"
+}
+```
+
+### پاسخ موفقیت‌آمیز (200 OK)
+```json
+{
+    "status": "success",
+    "message": "پرداخت موفقیت‌آمیز بود. رزرو تایید شد.",
+    "payment_details": {
+        "payment_id": 1,
+        "reservation_id": 101,
+        "amount_paid": 500000,
+        "payment_status": "SUCCESSFUL",
+        "payment_method": "WALLET",
+        "date_and_time_of_payment": "YYYY-MM-DDTHH:MM:SSZ"
+    },
+    "reservation_history": {
+        "operation_type": "BUY",
+        "history_status": "SUCCESSFUL",
+        "date_and_time": "YYYY-MM-DDTHH:MM:SSZ"
+    },
+    "new_wallet_balance": 1500000
+}
+```
+
+###  پاسخ‌های خطا
+```json
+{"status": "error", "message": "پرداخت ناموفق: موجودی کیف پول کافی نیست."}
+{"status": "error", "message": "ممنوع: فقط کاربران عادی می‌توانند پرداخت انجام دهند."}
+{"status": "error", "message": "رزرو موقت در Redis یافت نشد یا منقضی شده است."}
+{"status": "error", "message": "وضعیت رزرو {status} است. فقط رزروهای TEMPORARY قابل پرداخت هستند."}
+```
+
+---
+
+
+## 12. ادمین: دریافت رزروهای لغو شده
+
+- **URL**: `admin/cancelled-reservations/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (فقط ادمین)  
+- **Request Body (Optional)**:
+```json
+{
+  "username": "user123",
+  "ticket_id": 45
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "count": 1,
+  "data": [
+    {
+      "reservation_history_id": 1,
+      "cancellation_time": "YYYY-MM-DDTHH:MM:SSZ",
+      "canceled_by_user": "user123",
+      "ticket_id": 45,
+      "reservation_id": 101,
+      "departure_start": "YYYY-MM-DDTHH:MM:SSZ"
+    }
+  ]
+}
+```
+
+## 13. ادمین: دریافت لیست درخواست‌ها
+
+- **URL**: `admin/requests/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (فقط ادمین)  
+- **Request Body (Optional)**:
+```json
+{
+  "username": "user123",
+  "ticket_id": 45,
+  "status": "PENDING"
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "count": 1,
+  "data": [
+    {
+      "request_id": 1,
+      "username": "user123",
+      "reservation_id": 101,
+      "ticket_id": 45,
+      "request_subject": "CANCEL",
+      "request_text": "من باید این سفر را لغو کنم.",
+      "requested_at": "YYYY-MM-DDTHH:MM:SSZ",
+      "is_checked": false,
+      "is_accepted": false
+    }
+  ]
+}
+```
+
+## 14. ادمین: تایید درخواست
+
+- **URL**: `admin/requests/<int:request_id>/approve/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (فقط ادمین)  
+- **Request Body**: `{}`  
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "message": "لغو تایید شد. 450000 به کیف پول کاربر بازپرداخت شد."
+}
+```
+
+## 15. ادمین: رد درخواست
+
+- **URL**: `admin/requests/<int:request_id>/reject/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (فقط ادمین)  
+- **Request Body**: `{}`  
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "message": "درخواست رد شد."
+}
+```
+
+## 16. دریافت رزروهای کاربر
+
+- **URL**: `user-bookings/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (کاربر عادی)  
+- **Request Body (Optional)**:
+```json
+{
+  "status": "RESERVED",
+  "start_departure_date": "YYYY-MM-DD",
+  "end_departure_date": "YYYY-MM-DD",
+  "origin_city": "Tehran",
+  "destination_city": "Mashhad",
+  "ticket_id": 123,
+  "reservation_id": 101,
+  "operation_type": "BUY"
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "count": 1,
+  "data": [
+    {
+      "history_id": 1,
+      "reservation_id": 101,
+      "ticket_id": 123,
+      "operation_type": "BUY",
+      "operation_status": "SUCCESSFUL",
+      "operation_time": "YYYY-MM-DDTHH:MM:SSZ",
+      "ticket_details": {
+        "origin_city": "Tehran",
+        "destination_city": "Mashhad",
+        "departure_start": "YYYY-MM-DDTHH:MM:SS"
+      }
+    }
+  ]
+}
+```
+
+## 17. گزارش مشکل
+
+- **URL**: `report-issue/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (کاربر عادی)  
+- **Request Body**:
+```json
+{
+  "reservation_id": 123,
+  "report_type": "PAYMENT",
+  "report_text": "پرداخت من ناموفق بود اما بلیط همچنان به صورت موقت نمایش داده می‌شود."
+}
+```
+- **Response (201 Created)**:
+```json
+{
+  "status": "success",
+  "message": "گزارش مشکل شما با موفقیت ارسال شد.",
+  "report_details": {
+    "report_id": 1,
+    "reservation_id": 123,
+    "username": "currentUser",
+    "report_type": "PAYMENT",
+    "report_text": "...",
+    "report_status": "UNCHECKED"
+  }
+}
+```
+
+## 18. ادمین: مدیریت گزارش
+
+- **URL**: `admin/reports/<int:report_id>/manage/`  
+- **Method**: `PATCH`  
+- **Authentication**: Bearer Token (ادمین)  
+- **Request Body (Optional)**:
+```json
+{
+  "admin_response": "ما گزارش شما را بررسی کرده‌ایم و به زودی اقدام خواهیم کرد."
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "message": "گزارش با موفقیت به‌روزرسانی شد.",
+  "updated_report": {
+    ...
+  }
+}
+```
+
+## 19. ادمین: دریافت گزارش‌ها
+
+- **URL**: `admin/reports/`  
+- **Method**: `POST`  
+- **Authentication**: Bearer Token (ادمین)  
+- **Request Body (Optional)**:
+```json
+{
+  "username": "user123",
+  "ticket_id": 501,
+  "report_type": "PAYMENT",
+  "report_status": "UNCHECKED",
+  "reservation_id": 101
+}
+```
+- **Response (200 OK)**:
+```json
+{
+  "status": "success",
+  "count": 1,
+  "data": [
+    {
+      "report_id": 1,
+      "report_username": "user123",
+      "reservation_id": 101,
+      "ticket_id": 501,
+      "report_type": "PAYMENT",
+      "report_text": "...",
+      "report_status": "UNCHECKED",
+      "admin_response": null,
+      "ticket_details": {
+        "departure_start": "...",
+        "departure_end": "...",
+        "origin_city": "Tehran",
+        "destination_city": "Mashhad"
+      }
+    }
+  ]
+}
+```
+
+# ۴. نحوه تست APIها با Postman
+
+ما برای تست APIهای این پروژه از Postman استفاده کرده‌ایم. در اینجا یک مثال ساده برای شروع آمده است:
+
+## تست API `user-signup` با Postman:
+
+1. یک درخواست `POST`جدید ایجاد می  کنیم.
+2. URL را به `http://localhost:8000/api-test/user-signup/` تنظیم می کنیم.
+3. در تب **Body**، گزینه **raw** و سپس **JSON** را انتخاب می کنیم و JSON زیر را وارد می کنیم:
+
+```json
+{
+    "username": "newuser",
+    "password": "SecurePassword123!",
+    "email": "user@example.com",
+    "name": "Test User",
+    "phone_number": "09123456789"
+}
+```
+4. روی Send کلیک کنید.
+### شما باید یک پاسخ 201 Created را مشاهده کنید که نشان‌دهنده موفقیت‌آمیز بودن ثبت نام کاربر است.
+
+
+
+
+
+
+
+
+
+
+
