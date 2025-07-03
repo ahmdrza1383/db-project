@@ -1667,7 +1667,7 @@ def reserve_ticket_view(request):
 
 class CancelReservationView(APIView):
     """
-       Handles both checking cancellation policies (GET) and confirming the cancellation (POST)
+       Handles checking cancellation policies (GET).
        for a specific reservation identified by its ID.
     """
 
@@ -2796,7 +2796,7 @@ def get_user_bookings_view(request):
     except json.JSONDecodeError:
         return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
 
-    filter_status = data.get('reservation_status')
+    filter_status = data.get('status')
     start_date_str = data.get('start_departure_date')
     end_date_str = data.get('end_departure_date')
     origin_city = data.get('origin_city')
@@ -2837,7 +2837,7 @@ def get_user_bookings_view(request):
     if filter_status:
         status_upper = filter_status.upper()
         if status_upper == 'RESERVED':
-            query += " AND rh.operation_type = 'BUY' AND rh.buy_status = 'SUCCESSFUL'"
+            query += " AND rh.operation_type = 'BUY'"
         elif status_upper == 'CANCELED':
             query += " AND rh.operation_type = 'CANCEL'"
         else:
