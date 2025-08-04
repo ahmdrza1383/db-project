@@ -21,9 +21,33 @@ from datetime import datetime
 import json
 import smtplib
 from email.message import EmailMessage
+from elasticsearch import Elasticsearch, NotFoundError
 
 from .auth_utils import *
 from .tasks import expire_reservation
+
+
+def update_ticket_in_elastic(ticket_id: int, updates: dict):
+    """
+    Updates a specific ticket document in Elasticsearch.
+
+    Args:
+        ticket_id: The ID of the ticket to update.
+        updates: A dictionary containing the fields to update.
+                 Example: {"remaining_capacity": 19}
+    """
+    try:
+        es_host = os.environ.get("ELASTICSEARCH_HOST", "localhost")
+        es_client = Elasticsearch(
+            hosts=[{"host": es_host, "port": 9200, "scheme": "http"}]
+        )
+        if es_client.ping():
+            es_client.update(index="tickets", id=ticket_id, doc=updates)
+            print(f"Successfully updated ticket {ticket_id} in Elasticsearch with: {updates}")
+    except NotFoundError:
+        print(f"Warning: Ticket with ID {ticket_id} not found in Elasticsearch. Could not update.")
+    except Exception as e:
+        print(f"ERROR: Failed to update ticket {ticket_id} in Elasticsearch: {e}")
 
 
 def generate_otp(length=6):
@@ -849,31 +873,26 @@ def get_cities_list_view(request):
 @require_http_methods(["POST"])
 def search_tickets_view(request):
     """
-    Allows users to search for available tickets based on various criteria using a POST request.
+    Searches for tickets using Elasticsearch based on various criteria.
 
-    Users can search by origin, destination, travel date, and vehicle type.
-    Results are cached in Redis in two layers:
-    1. Search Cache: Stores a list of ticket_ids matching the search filters.
-    2. Ticket Details Cache: Stores full details for each individual ticket_id.
-    This enables efficient cache invalidation for specific tickets.
-
-    Optional filters for price, transport company, departure time, and travel class
-    are also supported.
+    This endpoint receives a JSON payload with search filters and constructs a
+    dynamic query to search the 'tickets' index in Elasticsearch. It supports
+    required fields like origin, destination, and date, as well as a wide
+    range of optional filters for vehicle type, price, company, and specific
+    vehicle attributes.
 
     Request Body (JSON):
     {
         "origin_city": "Tehran",
         "destination_city": "Mashhad",
-        "departure_date": "2025-06-15",
-        "vehicle_type": "FLIGHT", // Optional: 'FLIGHT', 'TRAIN', 'BUS'
-        "min_price": 100000,     // Optional
-        "max_price": 500000,     // Optional
-        "company_name": "Mahan Air", // Optional (for Flight/Bus)
-        "min_departure_time": "08:00", // Optional: HH:MM for departure start
-        "max_departure_time": "18:00", // Optional: HH:MM for departure start
-        "flight_class": "Economy",   // Optional (for Flight)
-        "train_stars": 4,          // Optional (for Train)
-        "bus_type": "VIP"          // Optional (for Bus)
+        "departure_date": "2025-07-10",
+        "vehicle_type": "BUS",           // Optional: 'FLIGHT', 'TRAIN', 'BUS'
+        "min_price": 100000,             // Optional
+        "max_price": 500000,             // Optional
+        "company_name": "Hamsafar",      // Optional (for Flight/Bus)
+        "flight_class": "Economy",       // Optional (for Flight)
+        "train_stars": 4,                // Optional (for Train)
+        "bus_type": "VIP"                // Optional (for Bus)
     }
 
     Successful Response (JSON - Status Code: 200 OK):
@@ -881,353 +900,109 @@ def search_tickets_view(request):
         "status": "success",
         "data": [
             {
-                "ticket_id": 1,
+                "ticket_id": 22,
                 "origin_city": "Tehran",
-                "destination_city": "Mashhad",
-                "departure_start": "YYYY-MM-DDTHH:MM:SS",
-                "departure_end": "YYYY-MM-DDTHH:MM:SS",
-                "price": 500000,
-                "remaining_capacity": 20,
-                "vehicle_type": "FLIGHT",
-                "airline_name": "Mahan Air",
-                "flight_class": "Economy",
-                "number_of_stop": 0,
-                "flight_code": "IR-1234",
-                "origin_airport": "Mehrabad",
-                "destination_airport": "Mashhad",
-                "facility": {"meal": true}
-            },
-            // ... more tickets
+                "destination_city": "Qazvin",
+                // ... other ticket details
+            }
         ],
-        "cached": true/false // Indicates if response was from cache
+        "cached": false
     }
 
     Error Responses (JSON):
-    - Invalid JSON format:
-      {"status": "error", "message": "Invalid JSON format in request body."} (Status Code: 400)
-    - Missing required parameters:
-      {"status": "error", "message": "Missing required parameters: [param_names]"} (Status Code: 400)
-    - Invalid date format:
-      {"status": "error", "message": "Invalid departure_date format. Please use YYYY-MM-DD."} (Status Code: 400)
-    - Invalid time format:
-      {"status": "error", "message": "Invalid time format for min/max_departure_time. Please use HH:MM."} (Status Code: 400)
-    - Invalid price/star values:
-      {"status": "error", "message": "Price or stars must be positive integers."} (Status Code: 400)
-    - Invalid vehicle type:
-      {"status": "error", "message": "Invalid vehicle_type. Must be 'FLIGHT', 'TRAIN', or 'BUS'."} (Status Code: 400)
-    - Database error:
-      {"status": "error", "message": "A database error occurred during ticket search."} (Status Code: 500)
-    - Redis error:
-      {"status": "error", "message": "A Redis error occurred during caching."} (Status Code: 500)
-    - Unexpected server error:
-      {"status": "error", "message": "An unexpected error occurred."} (Status Code: 500)
+    - 400 Bad Request: For invalid JSON, missing required fields, or bad data formats.
+    - 500 Internal Server Error: For database or unexpected server errors.
+    - 503 Service Unavailable: If the connection to Elasticsearch fails.
     """
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
 
-    origin_city = data.get('origin_city')
-    destination_city = data.get('destination_city')
-    departure_date_str = data.get('departure_date')
+    if not all(k in data for k in ['origin_city', 'destination_city', 'departure_date']):
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Missing required parameters: origin_city, destination_city, departure_date'
+        }, status=400)
 
-    vehicle_type = data.get('vehicle_type')
-    min_price = data.get('min_price')
-    max_price = data.get('max_price')
-    company_name = data.get('company_name')
-    min_departure_time_str = data.get('min_departure_time')
-    max_departure_time_str = data.get('max_departure_time')
-    flight_class = data.get('flight_class')
-    train_stars = data.get('train_stars')
-    bus_type = data.get('bus_type')
+    try:
+        es_host = os.environ.get("ELASTICSEARCH_HOST", "localhost")
+        es_client = Elasticsearch(
+            hosts=[{"host": es_host, "port": 9200, "scheme": "http"}]
+        )
+        if not es_client.ping():
+            raise ConnectionError("Could not connect to Elasticsearch")
+    except Exception as e:
+        print(f"Elasticsearch connection error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Search service is temporarily unavailable.'}, status=503)
 
-    required_params = {
-        'origin_city': origin_city,
-        'destination_city': destination_city,
-        'departure_date': departure_date_str,
+    search_query = {
+        "query": {
+            "bool": {
+                "must": [],
+                "filter": [
+                    {"term": {"ticket_status": True}}
+                ]
+            }
+        }
     }
-    missing_params = [key for key, value in required_params.items() if not value]
-    if missing_params:
-        return JsonResponse({'status': 'error', 'message': f'Missing required parameters: {", ".join(missing_params)}'},
+
+    search_query["query"]["bool"]["must"].append({"match": {"origin_city": data["origin_city"]}})
+    search_query["query"]["bool"]["must"].append({"match": {"destination_city": data["destination_city"]}})
+
+    try:
+        date_str = data['departure_date']
+        start_of_day = f"{date_str}T00:00:00"
+        end_of_day = f"{date_str}T23:59:59"
+        search_query["query"]["bool"]["filter"].append({
+            "range": {
+                "departure_start": {
+                    "gte": start_of_day,
+                    "lte": end_of_day,
+                    "format": "yyyy-MM-dd'T'HH:mm:ss"
+                }
+            }
+        })
+    except (ValueError, KeyError):
+        return JsonResponse({'status': 'error', 'message': 'Invalid date format for departure_date (YYYY-MM-DD).'},
                             status=400)
 
+    if data.get("vehicle_type"):
+        search_query["query"]["bool"]["filter"].append({"term": {"vehicle_type": data["vehicle_type"].upper()}})
+
+    price_range_query = {}
+    if data.get("min_price"):
+        price_range_query["gte"] = data["min_price"]
+    if data.get("max_price"):
+        price_range_query["lte"] = data["max_price"]
+    if price_range_query:
+        search_query["query"]["bool"]["filter"].append({"range": {"price": price_range_query}})
+
+    if data.get("company_name"):
+        search_query["query"]["bool"]["must"].append({
+            "multi_match": {
+                "query": data["company_name"],
+                "fields": ["airline_name", "company_name"],
+                "fuzziness": "AUTO"
+            }
+        })
+
+    if data.get("flight_class"):
+        search_query["query"]["bool"]["filter"].append({"term": {"flight_class.keyword": data["flight_class"]}})
+
+    if data.get("train_stars"):
+        search_query["query"]["bool"]["filter"].append({"term": {"train_stars": data["train_stars"]}})
+
+    if data.get("bus_type"):
+        search_query["query"]["bool"]["filter"].append({"term": {"bus_type.keyword": data["bus_type"]}})
+
     try:
-        departure_date = datetime.strptime(departure_date_str, '%Y-%m-%d').date()
-    except ValueError:
-        return JsonResponse(
-            {'status': 'error', 'message': 'Invalid departure_date format. Please use YYYY-MM-DD.'},
-            status=400
-        )
-
-    def validate_time_format(time_str):
-        if time_str:
-            try:
-                datetime.strptime(time_str, '%H:%M').time()
-                return True
-            except ValueError:
-                return False
-        return True
-
-    if not validate_time_format(min_departure_time_str) or not validate_time_format(max_departure_time_str):
-        return JsonResponse(
-            {'status': 'error', 'message': 'Invalid time format for min/max_departure_time. Please use HH:MM.'},
-            status=400)
-
-    numeric_params_validated = {}
-    for param_name, param_value in {'min_price': min_price, 'max_price': max_price, 'train_stars': train_stars}.items():
-        if param_value is not None:
-            try:
-                numeric_params_validated[param_name] = int(param_value)
-                if numeric_params_validated[param_name] <= 0:
-                    raise ValueError
-                if param_name == 'train_stars' and not (1 <= numeric_params_validated[param_name] <= 5):
-                    return JsonResponse({'status': 'error', 'message': 'train_stars must be between 1 and 5.'},
-                                        status=400)
-            except (ValueError, TypeError):
-                return JsonResponse({'status': 'error', 'message': f'{param_name} must be a positive integer.'},
-                                    status=400)
-
-    valid_vehicle_types = ['FLIGHT', 'TRAIN', 'BUS']
-    if vehicle_type and vehicle_type.upper() not in valid_vehicle_types:
-        return JsonResponse(
-            {'status': 'error', 'message': 'Invalid vehicle_type. Must be \'FLIGHT\', \'TRAIN\', or \'BUS\'.'},
-            status=400)
-
-    cache_key_data = {k: v for k, v in data.items() if v is not None}
-    search_results_cache_key = f"search_results:{json.dumps(cache_key_data, sort_keys=True)}"
-
-    cached_ticket_ids_json = None
-    if redis_client:
-        try:
-            cached_ticket_ids_json = redis_client.get(search_results_cache_key)
-        except redis.exceptions.RedisError as e:
-            print(f"Redis error during search results cache lookup for key {search_results_cache_key}: {e}")
-
-    if cached_ticket_ids_json:
-        try:
-            cached_ticket_ids = json.loads(cached_ticket_ids_json)
-            retrieved_tickets_from_cache = []
-            all_from_cache = True
-
-            for tid in cached_ticket_ids:
-                ticket_details_cache_key = f"ticket_details:{tid}"
-                ticket_details_json = redis_client.get(ticket_details_cache_key)
-                if ticket_details_json:
-                    try:
-                        retrieved_tickets_from_cache.append(json.loads(ticket_details_json))
-                    except json.JSONDecodeError:
-                        print(
-                            f"Corrupted ticket details cache for key {ticket_details_cache_key}. Re-fetching from DB.")
-                        all_from_cache = False
-                        break
-                else:
-                    all_from_cache = False
-                    break
-
-            if all_from_cache:
-                print(
-                    f"Serving search results (ticket IDs and details) from Redis cache for key: {search_results_cache_key}")
-                return JsonResponse({
-                    'status': 'success',
-                    'data': retrieved_tickets_from_cache,
-                    'cached': True
-                })
-        except json.JSONDecodeError:
-            print(f"Corrupted search results cache for key {search_results_cache_key}. Re-fetching from DB.")
-        except redis.exceptions.RedisError as e:
-            print(f"Redis error during retrieving individual ticket details from cache: {e}")
-
-
-    tickets_data = []
-    try:
-        with connection.cursor() as cursor:
-            base_query = """
-                         SELECT t.ticket_id, \
-                                origin_loc.city AS origin_city, \
-                                dest_loc.city   AS destination_city, \
-                                t.departure_start, \
-                                t.departure_end, \
-                                t.price, \
-                                t.remaining_capacity, \
-                                v.vehicle_type, \
-                                f.airline_name, \
-                                f.flight_class, \
-                                f.number_of_stop, \
-                                f.flight_code, \
-                                f.origin_airport, \
-                                f.destination_airport, \
-                                f.facility      AS flight_facility, \
-                                tr.train_stars, \
-                                tr.choosing_a_closed_coupe, \
-                                tr.facility     AS train_facility, \
-                                b.company_name, \
-                                b.bus_type, \
-                                b.number_of_chairs, \
-                                b.facility      AS bus_facility
-                         FROM tickets t
-                                  INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
-                                  INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
-                                  INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
-                                  LEFT JOIN flights f ON v.vehicle_id = f.vehicle_id AND v.vehicle_type = 'FLIGHT'
-                                  LEFT JOIN trains tr ON v.vehicle_id = tr.vehicle_id AND v.vehicle_type = 'TRAIN'
-                                  LEFT JOIN buses b ON v.vehicle_id = b.vehicle_id AND v.vehicle_type = 'BUS'
-                         WHERE origin_loc.city ILIKE %s \
-                           AND
-                             dest_loc.city ILIKE %s \
-                           AND
-                             DATE (t.departure_start) = %s \
-                           AND
-                             t.ticket_status = TRUE \
-                         """
-            query_params = [origin_city, destination_city, departure_date]
-
-            if vehicle_type:
-                base_query += " AND v.vehicle_type = %s"
-                query_params.append(vehicle_type.upper())
-
-            if 'min_price' in numeric_params_validated:
-                base_query += " AND t.price >= %s"
-                query_params.append(numeric_params_validated['min_price'])
-            if 'max_price' in numeric_params_validated:
-                base_query += " AND t.price <= %s"
-                query_params.append(numeric_params_validated['max_price'])
-
-            if min_departure_time_str:
-                base_query += " AND t.departure_start::time >= %s"
-                query_params.append(min_departure_time_str)
-            if max_departure_time_str:
-                base_query += " AND t.departure_start::time <= %s"
-                query_params.append(max_departure_time_str)
-
-            if company_name:
-                base_query += " AND (f.airline_name ILIKE %s OR b.company_name ILIKE %s)"
-                query_params.extend([f"%{company_name}%", f"%{company_name}%"])
-
-            if flight_class and (not vehicle_type or vehicle_type.upper() == 'FLIGHT'):
-                base_query += " AND f.flight_class ILIKE %s"
-                query_params.append(f"%{flight_class}%")
-
-            if 'train_stars' in numeric_params_validated and (not vehicle_type or vehicle_type.upper() == 'TRAIN'):
-                base_query += " AND tr.train_stars = %s"
-                query_params.append(numeric_params_validated['train_stars'])
-
-            if bus_type and (not vehicle_type or vehicle_type.upper() == 'BUS'):
-                base_query += " AND b.bus_type ILIKE %s"
-                query_params.append(f"%{bus_type}%")
-
-            base_query += " ORDER BY t.departure_start ASC;"
-
-            cursor.execute(base_query, query_params)
-            rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
-
-            found_ticket_ids = []
-            for row in rows:
-                ticket = dict(zip(columns, row))
-
-                if ticket.get('departure_start') and hasattr(ticket['departure_start'], 'isoformat'):
-                    ticket['departure_start'] = ticket['departure_start'].isoformat()
-                if ticket.get('departure_end') and hasattr(ticket['departure_end'], 'isoformat'):
-                    ticket['departure_end'] = ticket['departure_end'].isoformat()
-
-                vehicle_details = {}
-                current_vehicle_type = ticket['vehicle_type']
-
-                if current_vehicle_type == 'FLIGHT':
-                    vehicle_details['airline_name'] = ticket.pop('airline_name')
-                    vehicle_details['flight_class'] = ticket.pop('flight_class')
-                    vehicle_details['number_of_stop'] = ticket.pop('number_of_stop')
-                    vehicle_details['flight_code'] = ticket.pop('flight_code')
-                    vehicle_details['origin_airport'] = ticket.pop('origin_airport')
-                    vehicle_details['destination_airport'] = ticket.pop('destination_airport')
-                    facility_json = ticket.pop('flight_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                elif current_vehicle_type == 'TRAIN':
-                    vehicle_details['train_stars'] = ticket.pop('train_stars')
-                    vehicle_details['choosing_a_closed_coupe'] = ticket.pop('choosing_a_closed_coupe')
-                    facility_json = ticket.pop('train_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                elif current_vehicle_type == 'BUS':
-                    vehicle_details['company_name'] = ticket.pop('company_name')
-                    vehicle_details['bus_type'] = ticket.pop('bus_type')
-                    vehicle_details['number_of_chairs'] = ticket.pop('number_of_chairs')
-                    facility_json = ticket.pop('bus_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                ticket.pop('flight_facility', None)
-                ticket.pop('train_facility', None)
-                ticket.pop('bus_facility', None)
-
-                ticket.pop('airline_name', None)
-                ticket.pop('flight_class', None)
-                ticket.pop('number_of_stop', None)
-                ticket.pop('flight_code', None)
-                ticket.pop('origin_airport', None)
-                ticket.pop('destination_airport', None)
-                ticket.pop('train_stars', None)
-                ticket.pop('choosing_a_closed_coupe', None)
-                ticket.pop('company_name', None)
-                ticket.pop('bus_type', None)
-                ticket.pop('number_of_chairs', None)
-
-                ticket['vehicle_details'] = vehicle_details
-                tickets_data.append(ticket)
-                found_ticket_ids.append(ticket['ticket_id'])
-
-        response_data = {
-            'status': 'success',
-            'data': tickets_data,
-            'cached': False
-        }
-
-        if redis_client:
-            try:
-                cache_ttl_seconds = getattr(settings, 'TICKET_SEARCH_CACHE_TTL_SECONDS', 300)
-
-                redis_client.setex(search_results_cache_key, cache_ttl_seconds, json.dumps(found_ticket_ids))
-                print(
-                    f"Cached search results (ticket IDs) for key: {search_results_cache_key} with TTL: {cache_ttl_seconds}s")
-
-                for ticket_detail in tickets_data:
-                    ticket_details_cache_key = f"ticket_details:{ticket_detail['ticket_id']}"
-                    redis_client.setex(ticket_details_cache_key, cache_ttl_seconds, json.dumps(ticket_detail))
-                    print(
-                        f"Cached individual ticket details for key: {ticket_details_cache_key} with TTL: {cache_ttl_seconds}s")
-
-            except redis.exceptions.RedisError as e:
-                print(f"Redis error during caching search results or individual ticket details: {e}")
-            except Exception as e:
-                print(f"Error preparing data for Redis cache in search_tickets_view: {e}")
-
-        return JsonResponse(response_data, status=200)
-
-    except DatabaseError as e:
-        print(f"DatabaseError in search_tickets_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred during ticket search.'},
-                            status=500)
+        response = es_client.search(index="tickets", body=search_query, size=100)  # Increase size to get more results
+        results = [hit['_source'] for hit in response['hits']['hits']]
+        return JsonResponse({"status": "success", "data": results, "cached": False})
     except Exception as e:
-        print(f"Unexpected error in search_tickets_view: {e.__class__.__name__}: {e}")
-        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
+        print(f"Elasticsearch search error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An error occurred during the search.'}, status=500)
 
 
 @csrf_exempt
@@ -1582,6 +1357,10 @@ def reserve_ticket_view(request):
                 if cursor.rowcount == 0:
                     raise DatabaseError(f"Failed to update remaining capacity for ticket ID {ticket_id}.")
 
+                transaction.on_commit(
+                    lambda: update_ticket_in_elastic(ticket_id, {"remaining_capacity": new_remaining_capacity})
+                )
+
             if reservation_id_to_monitor:
                 expiry_seconds = expiry_minutes_setting * 60
                 transaction.on_commit(
@@ -1764,7 +1543,6 @@ class CancelReservationView(APIView):
             print(f"Error in GET CancellationView: {e}")
             return Response({'status': 'error', 'message': 'An unexpected error occurred.'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 
 class CreateRequestView(APIView):
@@ -2563,7 +2341,7 @@ def admin_approve_request_view(request, request_id):
                         request_submit_time = request_submit_time.replace(tzinfo=timezone.utc)
 
                     time_to_departure_from_request_submit = (
-                                                                        departure_start_time - request_submit_time).total_seconds() / 3600
+                                                                    departure_start_time - request_submit_time).total_seconds() / 3600
 
                     penalty_percentage = 10 if time_to_departure_from_request_submit > 1 else 50
                     penalty_amount = (data_dict['price'] * penalty_percentage) / 100
@@ -2591,6 +2369,12 @@ def admin_approve_request_view(request, request_id):
                     cursor.execute(
                         "UPDATE tickets SET remaining_capacity = %s WHERE ticket_id = %s;",
                         [new_remaining_capacity, data_dict['ticket_id']])
+
+                    final_ticket_id = data_dict['ticket_id']
+                    transaction.on_commit(
+                        lambda: update_ticket_in_elastic(final_ticket_id,
+                                                         {"remaining_capacity": new_remaining_capacity})
+                    )
 
                     if redis_client:
                         ticket_details_cache_key = f"ticket_details:{data_dict['ticket_id']}"

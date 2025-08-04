@@ -7,6 +7,8 @@ import json
 import redis
 from django.conf import settings
 
+from api.views import update_ticket_in_elastic
+
 redis_client = None
 try:
     redis_client = redis.Redis(
@@ -83,6 +85,8 @@ def expire_reservation(reservation_id):
                 conn.commit()
                 print(
                     f"Reservation {reservation_id} expired and ticket {ticket_id_for_revert} updated to new capacity {new_remaining_capacity}. Transaction committed.")
+
+                update_ticket_in_elastic(ticket_id_for_revert, {"remaining_capacity": new_remaining_capacity})
 
                 if redis_client:
                     ticket_details_cache_key = f"ticket_details:{ticket_id_for_revert}"
