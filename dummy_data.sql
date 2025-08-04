@@ -664,259 +664,256 @@ VALUES
 INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method)
 VALUES
 -- پرداخت برای رزروهای تیکت 1 (Tehran to Mashhad - پرواز، قیمت: 3000000)
-('ali123', 1, 3000000, 'PAID', '2025-05-02 10:15:00', 'CREDIT_CARD'),        -- ali123: EMAIL
-('sara456', 2, 3000000, 'PAID', '2025-05-02 12:15:00', 'WALLET'),            -- sara456: PHONE_NUMBER
-('mohammad789', 3, 3000000, 'PAID', '2025-05-03 09:15:00', 'CREDIT_CARD'),   -- mohammad789: EMAIL
-('zahra101', 4, 3000000, 'PAID', '2025-05-03 11:15:00', 'CREDIT_CARD'),      -- zahra101: EMAIL
-('reza202', 5, 3000000, 'PAID', '2025-05-04 08:15:00', 'WALLET'),            -- reza202: PHONE_NUMBER
+('ali123', 1, 3000000, 'SUCCESSFUL', '2025-05-02 10:15:00', 'CREDIT_CARD'),        -- ali123: EMAIL
+('sara456', 2, 3000000, 'SUCCESSFUL', '2025-05-02 12:15:00', 'WALLET'),            -- sara456: PHONE_NUMBER
+('mohammad789', 3, 3000000, 'SUCCESSFUL', '2025-05-03 09:15:00', 'CREDIT_CARD'),   -- mohammad789: EMAIL
+('zahra101', 4, 3000000, 'SUCCESSFUL', '2025-05-03 11:15:00', 'CREDIT_CARD'),      -- zahra101: EMAIL
+('reza202', 5, 3000000, 'SUCCESSFUL', '2025-05-04 08:15:00', 'WALLET'),            -- reza202: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 2 (Tehran to Shiraz - پرواز، قیمت: 3500000)
-('leila303', 6, 3500000, 'PAID', '2025-05-03 10:15:00', 'CREDIT_CARD'),      -- leila303: EMAIL
-('hassan404', 7, 3500000, 'PAID', '2025-05-03 12:15:00', 'WALLET'),          -- hassan404: PHONE_NUMBER
-('nazanin505', 8, 3500000, 'PAID', '2025-05-04 09:15:00', 'CREDIT_CARD'),    -- nazanin505: EMAIL
-('amir606', 9, 3500000, 'PAID', '2025-05-04 11:15:00', 'WALLET'),            -- amir606: PHONE_NUMBER
-('fateme707', 10, 3500000, 'PAID', '2025-05-05 08:15:00', 'CREDIT_CARD'),    -- fateme707: EMAIL
+('leila303', 6, 3500000, 'SUCCESSFUL', '2025-05-03 10:15:00', 'CREDIT_CARD'),      -- leila303: EMAIL
+('hassan404', 7, 3500000, 'SUCCESSFUL', '2025-05-03 12:15:00', 'WALLET'),          -- hassan404: PHONE_NUMBER
+('nazanin505', 8, 3500000, 'SUCCESSFUL', '2025-05-04 09:15:00', 'CREDIT_CARD'),    -- nazanin505: EMAIL
+('amir606', 9, 3500000, 'SUCCESSFUL', '2025-05-04 11:15:00', 'WALLET'),            -- amir606: PHONE_NUMBER
+('fateme707', 10, 3500000, 'SUCCESSFUL', '2025-05-05 08:15:00', 'CREDIT_CARD'),    -- fateme707: EMAIL
 -- پرداخت برای رزروهای تیکت 3 (Tehran to Tabriz - پرواز، قیمت: 3200000)
-('ahmad808', 11, 3200000, 'PAID', '2025-05-04 10:15:00', 'WALLET'),          -- ahmad808: PHONE_NUMBER
-('mahsa909', 12, 3200000, 'PAID', '2025-05-04 12:15:00', 'CREDIT_CARD'),     -- mahsa909: EMAIL
-('kaveh1010', 13, 3200000, 'PAID', '2025-05-05 09:15:00', 'WALLET'),         -- kaveh1010: PHONE_NUMBER
-('sima1111', 14, 3200000, 'PAID', '2025-05-05 11:15:00', 'CREDIT_CARD'),     -- sima1111: EMAIL
-('behnam1212', 15, 3200000, 'PAID', '2025-05-06 08:15:00', 'WALLET'),        -- behnam1212: PHONE_NUMBER
+('ahmad808', 11, 3200000, 'SUCCESSFUL', '2025-05-04 10:15:00', 'WALLET'),          -- ahmad808: PHONE_NUMBER
+('mahsa909', 12, 3200000, 'SUCCESSFUL', '2025-05-04 12:15:00', 'CREDIT_CARD'),     -- mahsa909: EMAIL
+('kaveh1010', 13, 3200000, 'SUCCESSFUL', '2025-05-05 09:15:00', 'WALLET'),         -- kaveh1010: PHONE_NUMBER
+('sima1111', 14, 3200000, 'SUCCESSFUL', '2025-05-05 11:15:00', 'CREDIT_CARD'),     -- sima1111: EMAIL
+('behnam1212', 15, 3200000, 'SUCCESSFUL', '2025-05-06 08:15:00', 'WALLET'),        -- behnam1212: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 4 (Tehran to Ahvaz - پرواز، قیمت: 3400000)
-('parisa1313', 16, 3400000, 'PAID', '2025-05-05 10:15:00', 'CREDIT_CARD'),   -- parisa1313: EMAIL
-('kamran1414', 17, 3400000, 'PAID', '2025-05-05 12:15:00', 'WALLET'),        -- kamran1414: PHONE_NUMBER
-('niloofar1515', 18, 3400000, 'PAID', '2025-05-06 09:15:00', 'CREDIT_CARD'), -- niloofar1515: EMAIL
-('arash1616', 19, 3400000, 'PAID', '2025-05-06 11:15:00', 'WALLET'),         -- arash1616: PHONE_NUMBER
-('shirin1717', 20, 3400000, 'PAID', '2025-05-07 08:15:00', 'CREDIT_CARD'),   -- shirin1717: EMAIL
+('parisa1313', 16, 3400000, 'SUCCESSFUL', '2025-05-05 10:15:00', 'CREDIT_CARD'),   -- parisa1313: EMAIL
+('kamran1414', 17, 3400000, 'SUCCESSFUL', '2025-05-05 12:15:00', 'WALLET'),        -- kamran1414: PHONE_NUMBER
+('niloofar1515', 18, 3400000, 'SUCCESSFUL', '2025-05-06 09:15:00', 'CREDIT_CARD'), -- niloofar1515: EMAIL
+('arash1616', 19, 3400000, 'SUCCESSFUL', '2025-05-06 11:15:00', 'WALLET'),         -- arash1616: PHONE_NUMBER
+('shirin1717', 20, 3400000, 'SUCCESSFUL', '2025-05-07 08:15:00', 'CREDIT_CARD'),   -- shirin1717: EMAIL
 -- پرداخت برای رزروهای تیکت 5 (Tehran to Kermanshah - پرواز، قیمت: 3100000)
-('user1818', 21, 3100000, 'PAID', '2025-05-06 10:15:00', 'WALLET'),          -- user1818: PHONE_NUMBER
-('user1919', 22, 3100000, 'PAID', '2025-05-06 12:15:00', 'CREDIT_CARD'),     -- user1919: EMAIL
-('user2020', 23, 3100000, 'PAID', '2025-05-07 09:15:00', 'WALLET'),          -- user2020: PHONE_NUMBER
-('user2121', 24, 3100000, 'PAID', '2025-05-07 11:15:00', 'CREDIT_CARD'),     -- user2121: EMAIL
-('user2222', 25, 3100000, 'PAID', '2025-05-08 08:15:00', 'WALLET'),          -- user2222: PHONE_NUMBER
+('user1818', 21, 3100000, 'SUCCESSFUL', '2025-05-06 10:15:00', 'WALLET'),          -- user1818: PHONE_NUMBER
+('user1919', 22, 3100000, 'SUCCESSFUL', '2025-05-06 12:15:00', 'CREDIT_CARD'),     -- user1919: EMAIL
+('user2020', 23, 3100000, 'SUCCESSFUL', '2025-05-07 09:15:00', 'WALLET'),          -- user2020: PHONE_NUMBER
+('user2121', 24, 3100000, 'SUCCESSFUL', '2025-05-07 11:15:00', 'CREDIT_CARD'),     -- user2121: EMAIL
+('user2222', 25, 3100000, 'SUCCESSFUL', '2025-05-08 08:15:00', 'WALLET'),          -- user2222: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 6 (Mashhad to Tehran - پرواز، قیمت: 3000000)
-('user2323', 26, 3000000, 'PAID', '2025-05-07 10:15:00', 'CREDIT_CARD'),     -- user2323: EMAIL
-('user2424', 27, 3000000, 'PAID', '2025-05-07 12:15:00', 'WALLET'),          -- user2424: PHONE_NUMBER
-('user2525', 28, 3000000, 'PAID', '2025-05-08 09:15:00', 'CREDIT_CARD'),     -- user2525: EMAIL
-('user2626', 29, 3000000, 'PAID', '2025-05-08 11:15:00', 'WALLET'),          -- user2626: PHONE_NUMBER
-('user2727', 30, 3000000, 'PAID', '2025-05-09 08:15:00', 'CREDIT_CARD'),     -- user2727: EMAIL
+('user2323', 26, 3000000, 'SUCCESSFUL', '2025-05-07 10:15:00', 'CREDIT_CARD'),     -- user2323: EMAIL
+('user2424', 27, 3000000, 'SUCCESSFUL', '2025-05-07 12:15:00', 'WALLET'),          -- user2424: PHONE_NUMBER
+('user2525', 28, 3000000, 'SUCCESSFUL', '2025-05-08 09:15:00', 'CREDIT_CARD'),     -- user2525: EMAIL
+('user2626', 29, 3000000, 'SUCCESSFUL', '2025-05-08 11:15:00', 'WALLET'),          -- user2626: PHONE_NUMBER
+('user2727', 30, 3000000, 'SUCCESSFUL', '2025-05-09 08:15:00', 'CREDIT_CARD'),     -- user2727: EMAIL
 -- پرداخت برای رزروهای تیکت 7 (Shiraz to Tabriz - پرواز، قیمت: 3400000)
-('user2828', 31, 3400000, 'PAID', '2025-05-08 10:15:00', 'WALLET'),          -- user2828: PHONE_NUMBER
-('user2929', 32, 3400000, 'PAID', '2025-05-08 12:15:00', 'WALLET'),          -- user2929: PHONE_NUMBER
-('user3030', 33, 3400000, 'PAID', '2025-05-09 09:15:00', 'CREDIT_CARD'),     -- user3030: EMAIL
-('user3131', 34, 3400000, 'PAID', '2025-05-09 11:15:00', 'WALLET'),          -- user3131: PHONE_NUMBER
-('user3232', 35, 3400000, 'PAID', '2025-05-10 08:15:00', 'CREDIT_CARD'),     -- user3232: EMAIL
+('user2828', 31, 3400000, 'SUCCESSFUL', '2025-05-08 10:15:00', 'WALLET'),          -- user2828: PHONE_NUMBER
+('user2929', 32, 3400000, 'SUCCESSFUL', '2025-05-08 12:15:00', 'WALLET'),          -- user2929: PHONE_NUMBER
+('user3030', 33, 3400000, 'SUCCESSFUL', '2025-05-09 09:15:00', 'CREDIT_CARD'),     -- user3030: EMAIL
+('user3131', 34, 3400000, 'SUCCESSFUL', '2025-05-09 11:15:00', 'WALLET'),          -- user3131: PHONE_NUMBER
+('user3232', 35, 3400000, 'SUCCESSFUL', '2025-05-10 08:15:00', 'CREDIT_CARD'),     -- user3232: EMAIL
 -- پرداخت برای رزروهای تیکت 8 (Ahvaz to Kermanshah - پرواز، قیمت: 3300000)
-('user3333', 36, 3300000, 'PAID', '2025-05-09 10:15:00', 'WALLET'),          -- user3333: PHONE_NUMBER
-('user3434', 37, 3300000, 'PAID', '2025-05-09 12:15:00', 'CREDIT_CARD'),     -- user3434: EMAIL
-('user3535', 38, 3300000, 'PAID', '2025-05-10 09:15:00', 'WALLET'),          -- user3535: PHONE_NUMBER
-('user3636', 39, 3300000, 'PAID', '2025-05-10 11:15:00', 'CREDIT_CARD'),     -- user3636: EMAIL
-('user3737', 40, 3300000, 'PAID', '2025-05-11 08:15:00', 'WALLET'),          -- user3737: PHONE_NUMBER
+('user3333', 36, 3300000, 'SUCCESSFUL', '2025-05-09 10:15:00', 'WALLET'),          -- user3333: PHONE_NUMBER
+('user3434', 37, 3300000, 'SUCCESSFUL', '2025-05-09 12:15:00', 'CREDIT_CARD'),     -- user3434: EMAIL
+('user3535', 38, 3300000, 'SUCCESSFUL', '2025-05-10 09:15:00', 'WALLET'),          -- user3535: PHONE_NUMBER
+('user3636', 39, 3300000, 'SUCCESSFUL', '2025-05-10 11:15:00', 'CREDIT_CARD'),     -- user3636: EMAIL
+('user3737', 40, 3300000, 'SUCCESSFUL', '2025-05-11 08:15:00', 'WALLET'),          -- user3737: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 9 (Tehran to Kerman - پرواز، قیمت: 3400000)
-('user3838', 41, 3400000, 'PAID', '2025-05-10 10:15:00', 'CREDIT_CARD'),     -- user3838: EMAIL
-('user3939', 42, 3400000, 'PAID', '2025-05-10 12:15:00', 'WALLET'),          -- user3939: PHONE_NUMBER
-('user4040', 43, 3400000, 'PAID', '2025-05-11 09:15:00', 'CREDIT_CARD'),     -- user4040: EMAIL
-('user4141', 44, 3400000, 'PAID', '2025-05-11 11:15:00', 'WALLET'),          -- user4141: PHONE_NUMBER
-('user4242', 45, 3400000, 'PAID', '2025-05-12 08:15:00', 'CREDIT_CARD'),     -- user4242: EMAIL
+('user3838', 41, 3400000, 'SUCCESSFUL', '2025-05-10 10:15:00', 'CREDIT_CARD'),     -- user3838: EMAIL
+('user3939', 42, 3400000, 'SUCCESSFUL', '2025-05-10 12:15:00', 'WALLET'),          -- user3939: PHONE_NUMBER
+('user4040', 43, 3400000, 'SUCCESSFUL', '2025-05-11 09:15:00', 'CREDIT_CARD'),     -- user4040: EMAIL
+('user4141', 44, 3400000, 'SUCCESSFUL', '2025-05-11 11:15:00', 'WALLET'),          -- user4141: PHONE_NUMBER
+('user4242', 45, 3400000, 'SUCCESSFUL', '2025-05-12 08:15:00', 'CREDIT_CARD'),     -- user4242: EMAIL
 -- پرداخت برای رزروهای تیکت 10 (Kerman to Tehran - پرواز، قیمت: 3100000)
-('user4343', 46, 3100000, 'PAID', '2025-05-11 10:15:00', 'WALLET'),          -- user4343: PHONE_NUMBER
-('user4444', 47, 3100000, 'PAID', '2025-05-11 12:15:00', 'CREDIT_CARD'),     -- user4444: EMAIL
-('user4545', 48, 3100000, 'PAID', '2025-05-12 09:15:00', 'WALLET'),          -- user4545: PHONE_NUMBER
-('user4646', 49, 3100000, 'PAID', '2025-05-12 11:15:00', 'CREDIT_CARD'),     -- user4646: EMAIL
-('user4747', 50, 3100000, 'PAID', '2025-05-13 08:15:00', 'WALLET'),          -- user4747: PHONE_NUMBER
+('user4343', 46, 3100000, 'SUCCESSFUL', '2025-05-11 10:15:00', 'WALLET'),          -- user4343: PHONE_NUMBER
+('user4444', 47, 3100000, 'SUCCESSFUL', '2025-05-11 12:15:00', 'CREDIT_CARD'),     -- user4444: EMAIL
+('user4545', 48, 3100000, 'SUCCESSFUL', '2025-05-12 09:15:00', 'WALLET'),          -- user4545: PHONE_NUMBER
+('user4646', 49, 3100000, 'SUCCESSFUL', '2025-05-12 11:15:00', 'CREDIT_CARD'),     -- user4646: EMAIL
+('user4747', 50, 3100000, 'SUCCESSFUL', '2025-05-13 08:15:00', 'WALLET'),          -- user4747: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 11 (Tehran to Shiraz - قطار، قیمت: 1500000)
-('user4848', 51, 1500000, 'PAID', '2025-05-12 10:15:00', 'CREDIT_CARD'),     -- user4848: EMAIL
-('user4949', 52, 1500000, 'PAID', '2025-05-12 12:15:00', 'WALLET'),          -- user4949: PHONE_NUMBER
-('user5050', 53, 1500000, 'PAID', '2025-05-13 09:15:00', 'CREDIT_CARD'),     -- user5050: EMAIL
-('user5151', 54, 1500000, 'PAID', '2025-05-13 11:15:00', 'WALLET'),          -- user5151: PHONE_NUMBER
-('user5252', 55, 1500000, 'PAID', '2025-05-14 08:15:00', 'CREDIT_CARD'),     -- user5252: EMAIL
+('user4848', 51, 1500000, 'SUCCESSFUL', '2025-05-12 10:15:00', 'CREDIT_CARD'),     -- user4848: EMAIL
+('user4949', 52, 1500000, 'SUCCESSFUL', '2025-05-12 12:15:00', 'WALLET'),          -- user4949: PHONE_NUMBER
+('user5050', 53, 1500000, 'SUCCESSFUL', '2025-05-13 09:15:00', 'CREDIT_CARD'),     -- user5050: EMAIL
+('user5151', 54, 1500000, 'SUCCESSFUL', '2025-05-13 11:15:00', 'WALLET'),          -- user5151: PHONE_NUMBER
+('user5252', 55, 1500000, 'SUCCESSFUL', '2025-05-14 08:15:00', 'CREDIT_CARD'),     -- user5252: EMAIL
 -- پرداخت برای رزروهای تیکت 12 (Tehran to Mashhad - قطار، قیمت: 1200000)
-('user5353', 56, 1200000, 'PAID', '2025-05-13 10:15:00', 'WALLET'),          -- user5353: PHONE_NUMBER
-('user5454', 57, 1200000, 'PAID', '2025-05-13 12:15:00', 'CREDIT_CARD'),     -- user5454: EMAIL
-('user5555', 58, 1200000, 'PAID', '2025-05-14 09:15:00', 'WALLET'),          -- user5555: PHONE_NUMBER
-('user5656', 59, 1200000, 'PAID', '2025-05-14 11:15:00', 'CREDIT_CARD'),     -- user5656: EMAIL
-('user5757', 60, 1200000, 'PAID', '2025-05-15 08:15:00', 'WALLET'),          -- user5757: PHONE_NUMBER
+('user5353', 56, 1200000, 'SUCCESSFUL', '2025-05-13 10:15:00', 'WALLET'),          -- user5353: PHONE_NUMBER
+('user5454', 57, 1200000, 'SUCCESSFUL', '2025-05-13 12:15:00', 'CREDIT_CARD'),     -- user5454: EMAIL
+('user5555', 58, 1200000, 'SUCCESSFUL', '2025-05-14 09:15:00', 'WALLET'),          -- user5555: PHONE_NUMBER
+('user5656', 59, 1200000, 'SUCCESSFUL', '2025-05-14 11:15:00', 'CREDIT_CARD'),     -- user5656: EMAIL
+('user5757', 60, 1200000, 'SUCCESSFUL', '2025-05-15 08:15:00', 'WALLET'),          -- user5757: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 13 (Tehran to Tabriz - قطار، قیمت: 1400000)
-('user5858', 61, 1400000, 'PAID', '2025-05-14 10:15:00', 'CREDIT_CARD'),     -- user5858: EMAIL
-('user5959', 62, 1400000, 'PAID', '2025-05-14 12:15:00', 'WALLET'),          -- user5959: PHONE_NUMBER
-('user6060', 63, 1400000, 'PAID', '2025-05-15 09:15:00', 'CREDIT_CARD'),     -- user6060: EMAIL
-('user6161', 64, 1400000, 'PAID', '2025-05-15 11:15:00', 'WALLET'),          -- user6161: PHONE_NUMBER
-('user6262', 65, 1400000, 'PAID', '2025-05-16 08:15:00', 'CREDIT_CARD'),     -- user6262: EMAIL
+('user5858', 61, 1400000, 'SUCCESSFUL', '2025-05-14 10:15:00', 'CREDIT_CARD'),     -- user5858: EMAIL
+('user5959', 62, 1400000, 'SUCCESSFUL', '2025-05-14 12:15:00', 'WALLET'),          -- user5959: PHONE_NUMBER
+('user6060', 63, 1400000, 'SUCCESSFUL', '2025-05-15 09:15:00', 'CREDIT_CARD'),     -- user6060: EMAIL
+('user6161', 64, 1400000, 'SUCCESSFUL', '2025-05-15 11:15:00', 'WALLET'),          -- user6161: PHONE_NUMBER
+('user6262', 65, 1400000, 'SUCCESSFUL', '2025-05-16 08:15:00', 'CREDIT_CARD'),     -- user6262: EMAIL
 -- پرداخت برای رزروهای تیکت 14 (Tehran to Ahvaz - قطار، قیمت: 1300000)
-('user6363', 66, 1300000, 'PAID', '2025-05-15 10:15:00', 'WALLET'),          -- user6363: EMAIL
-('user6464', 67, 1300000, 'PAID', '2025-05-15 12:15:00', 'WALLET'),          -- user6464: PHONE_NUMBER
-('user6565', 68, 1300000, 'PAID', '2025-05-16 09:15:00', 'CREDIT_CARD'),     -- user6565: EMAIL
-('user6666', 69, 1300000, 'PAID', '2025-05-16 11:15:00', 'WALLET'),          -- user6666: PHONE_NUMBER
-('user6767', 70, 1300000, 'PAID', '2025-05-17 08:15:00', 'CREDIT_CARD'),     -- user6767: EMAIL
+('user6363', 66, 1300000, 'SUCCESSFUL', '2025-05-15 10:15:00', 'WALLET'),          -- user6363: EMAIL
+('user6464', 67, 1300000, 'SUCCESSFUL', '2025-05-15 12:15:00', 'WALLET'),          -- user6464: PHONE_NUMBER
+('user6565', 68, 1300000, 'SUCCESSFUL', '2025-05-16 09:15:00', 'CREDIT_CARD'),     -- user6565: EMAIL
+('user6666', 69, 1300000, 'SUCCESSFUL', '2025-05-16 11:15:00', 'WALLET'),          -- user6666: PHONE_NUMBER
+('user6767', 70, 1300000, 'SUCCESSFUL', '2025-05-17 08:15:00', 'CREDIT_CARD'),     -- user6767: EMAIL
 -- پرداخت برای رزروهای تیکت 15 (Mashhad to Tehran - قطار، قیمت: 1200000)
-('user6868', 71, 1200000, 'PAID', '2025-05-16 10:15:00', 'WALLET'),          -- user6868: PHONE_NUMBER
-('user6969', 72, 1200000, 'PAID', '2025-05-16 12:15:00', 'CREDIT_CARD'),     -- user6969: EMAIL
-('user7070', 73, 1200000, 'PAID', '2025-05-17 09:15:00', 'WALLET'),          -- user7070: PHONE_NUMBER
-('user7171', 74, 1200000, 'PAID', '2025-05-17 11:15:00', 'CREDIT_CARD'),     -- user7171: EMAIL
-('user7272', 75, 1200000, 'PAID', '2025-05-18 08:15:00', 'WALLET'),          -- user7272: PHONE_NUMBER
+('user6868', 71, 1200000, 'SUCCESSFUL', '2025-05-16 10:15:00', 'WALLET'),          -- user6868: PHONE_NUMBER
+('user6969', 72, 1200000, 'SUCCESSFUL', '2025-05-16 12:15:00', 'CREDIT_CARD'),     -- user6969: EMAIL
+('user7070', 73, 1200000, 'SUCCESSFUL', '2025-05-17 09:15:00', 'WALLET'),          -- user7070: PHONE_NUMBER
+('user7171', 74, 1200000, 'SUCCESSFUL', '2025-05-17 11:15:00', 'CREDIT_CARD'),     -- user7171: EMAIL
+('user7272', 75, 1200000, 'SUCCESSFUL', '2025-05-18 08:15:00', 'WALLET'),          -- user7272: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 16 (Tehran to Karaj - اتوبوس، قیمت: 300000)
-('user7373', 76, 300000, 'PAID', '2025-05-17 10:15:00', 'CREDIT_CARD'),      -- user7373: EMAIL
-('user7474', 77, 300000, 'PAID', '2025-05-17 12:15:00', 'WALLET'),           -- user7474: PHONE_NUMBER
-('user7575', 78, 300000, 'PAID', '2025-05-18 09:15:00', 'CREDIT_CARD'),      -- user7575: EMAIL
-('user7676', 79, 300000, 'PAID', '2025-05-18 11:15:00', 'WALLET'),           -- user7676: PHONE_NUMBER
-('user7777', 80, 300000, 'PAID', '2025-05-19 08:15:00', 'CREDIT_CARD'),      -- user7777: EMAIL
+('user7373', 76, 300000, 'SUCCESSFUL', '2025-05-17 10:15:00', 'CREDIT_CARD'),      -- user7373: EMAIL
+('user7474', 77, 300000, 'SUCCESSFUL', '2025-05-17 12:15:00', 'WALLET'),           -- user7474: PHONE_NUMBER
+('user7575', 78, 300000, 'SUCCESSFUL', '2025-05-18 09:15:00', 'CREDIT_CARD'),      -- user7575: EMAIL
+('user7676', 79, 300000, 'SUCCESSFUL', '2025-05-18 11:15:00', 'WALLET'),           -- user7676: PHONE_NUMBER
+('user7777', 80, 300000, 'SUCCESSFUL', '2025-05-19 08:15:00', 'CREDIT_CARD'),      -- user7777: EMAIL
 -- پرداخت برای رزروهای تیکت 17 (Tehran to Varamin - اتوبوس، قیمت: 350000)
-('user7878', 81, 350000, 'PAID', '2025-05-18 10:15:00', 'WALLET'),           -- user7878: PHONE_NUMBER
-('user7979', 82, 350000, 'PAID', '2025-05-18 12:15:00', 'CREDIT_CARD'),      -- user7979: EMAIL
-('user8080', 83, 350000, 'PAID', '2025-05-19 09:15:00', 'WALLET'),           -- user8080: PHONE_NUMBER
-('user8181', 84, 350000, 'PAID', '2025-05-19 11:15:00', 'CREDIT_CARD'),      -- user8181: EMAIL
-('user8282', 85, 350000, 'PAID', '2025-05-20 08:15:00', 'WALLET'),           -- user8282: PHONE_NUMBER
+('user7878', 81, 350000, 'SUCCESSFUL', '2025-05-18 10:15:00', 'WALLET'),           -- user7878: PHONE_NUMBER
+('user7979', 82, 350000, 'SUCCESSFUL', '2025-05-18 12:15:00', 'CREDIT_CARD'),      -- user7979: EMAIL
+('user8080', 83, 350000, 'SUCCESSFUL', '2025-05-19 09:15:00', 'WALLET'),           -- user8080: PHONE_NUMBER
+('user8181', 84, 350000, 'SUCCESSFUL', '2025-05-19 11:15:00', 'CREDIT_CARD'),      -- user8181: EMAIL
+('user8282', 85, 350000, 'SUCCESSFUL', '2025-05-20 08:15:00', 'WALLET'),           -- user8282: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 18 (Tehran to Rey - اتوبوس، قیمت: 400000)
-('user8383', 86, 400000, 'PAID', '2025-05-19 10:15:00', 'CREDIT_CARD'),      -- user8383: EMAIL
-('user8484', 87, 400000, 'PAID', '2025-05-19 12:15:00', 'WALLET'),           -- user8484: PHONE_NUMBER
-('user8585', 88, 400000, 'PAID', '2025-05-20 09:15:00', 'CREDIT_CARD'),      -- user8585: EMAIL
-('user8686', 89, 400000, 'PAID', '2025-05-20 11:15:00', 'WALLET'),           -- user8686: PHONE_NUMBER
-('user8787', 90, 400000, 'PAID', '2025-05-21 08:15:00', 'CREDIT_CARD'),      -- user8787: EMAIL
+('user8383', 86, 400000, 'SUCCESSFUL', '2025-05-19 10:15:00', 'CREDIT_CARD'),      -- user8383: EMAIL
+('user8484', 87, 400000, 'SUCCESSFUL', '2025-05-19 12:15:00', 'WALLET'),           -- user8484: PHONE_NUMBER
+('user8585', 88, 400000, 'SUCCESSFUL', '2025-05-20 09:15:00', 'CREDIT_CARD'),      -- user8585: EMAIL
+('user8686', 89, 400000, 'SUCCESSFUL', '2025-05-20 11:15:00', 'WALLET'),           -- user8686: PHONE_NUMBER
+('user8787', 90, 400000, 'SUCCESSFUL', '2025-05-21 08:15:00', 'CREDIT_CARD'),      -- user8787: EMAIL
 -- پرداخت برای رزروهای تیکت 19 (Tehran to Isfahan - اتوبوس، قیمت: 600000)
-('user8888', 91, 600000, 'PAID', '2025-05-20 10:15:00', 'WALLET'),           -- user8888: PHONE_NUMBER
-('user8989', 92, 600000, 'PAID', '2025-05-20 12:15:00', 'CREDIT_CARD'),      -- user8989: EMAIL
-('user9090', 93, 600000, 'PAID', '2025-05-21 09:15:00', 'WALLET'),           -- user9090: PHONE_NUMBER
-('user9191', 94, 600000, 'PAID', '2025-05-21 11:15:00', 'CREDIT_CARD'),      -- user9191: EMAIL
-('user9292', 95, 600000, 'PAID', '2025-05-22 08:15:00', 'WALLET'),           -- user9292: PHONE_NUMBER
+('user8888', 91, 600000, 'SUCCESSFUL', '2025-05-20 10:15:00', 'WALLET'),           -- user8888: PHONE_NUMBER
+('user8989', 92, 600000, 'SUCCESSFUL', '2025-05-20 12:15:00', 'CREDIT_CARD'),      -- user8989: EMAIL
+('user9090', 93, 600000, 'SUCCESSFUL', '2025-05-21 09:15:00', 'WALLET'),           -- user9090: PHONE_NUMBER
+('user9191', 94, 600000, 'SUCCESSFUL', '2025-05-21 11:15:00', 'CREDIT_CARD'),      -- user9191: EMAIL
+('user9292', 95, 600000, 'SUCCESSFUL', '2025-05-22 08:15:00', 'WALLET'),           -- user9292: PHONE_NUMBER
 -- پرداخت برای رزروهای تیکت 20 (Isfahan to Tehran - اتوبوس، قیمت: 600000)
-('user9393', 96, 600000, 'PAID', '2025-05-21 10:15:00', 'CREDIT_CARD'),      -- user9393: EMAIL
-('user9494', 97, 600000, 'PAID', '2025-05-21 12:15:00', 'WALLET'),           -- user9494: PHONE_NUMBER
-('user9595', 98, 600000, 'PAID', '2025-05-22 09:15:00', 'CREDIT_CARD'),      -- user9595: EMAIL
-('ali123', 99, 600000, 'PAID', '2025-05-22 11:15:00', 'CREDIT_CARD'),        -- ali123: EMAIL
-('sara456', 100, 600000, 'PAID', '2025-05-23 08:15:00', 'WALLET');
+('user9393', 96, 600000, 'SUCCESSFUL', '2025-05-21 10:15:00', 'CREDIT_CARD'),      -- user9393: EMAIL
+('user9494', 97, 600000, 'SUCCESSFUL', '2025-05-21 12:15:00', 'WALLET'),           -- user9494: PHONE_NUMBER
+('user9595', 98, 600000, 'SUCCESSFUL', '2025-05-22 09:15:00', 'CREDIT_CARD'),      -- user9595: EMAIL
+('ali123', 99, 600000, 'SUCCESSFUL', '2025-05-22 11:15:00', 'CREDIT_CARD'),        -- ali123: EMAIL
+('sara456', 100, 600000, 'SUCCESSFUL', '2025-05-23 08:15:00', 'WALLET');
 -- sara456: PHONE_NUMBER
 
 
 -- افزودن تاریخچه رزروها (100 سطر)
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type)
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
 VALUES
 -- تاریخچه برای رزروهای تیکت 1 (Tehran to Mashhad - پرواز)
-('ali123', 1, '2025-05-02 10:15:00', 'BUY'),
-('sara456', 2, '2025-05-02 12:15:00', 'BUY'),
-('mohammad789', 3, '2025-05-03 09:15:00', 'BUY'),
-('zahra101', 4, '2025-05-03 11:15:00', 'BUY'),
-('reza202', 5, '2025-05-04 08:15:00', 'BUY'),
+('ali123', 1, '2025-05-02 10:15:00', 'BUY', 'SUCCESSFUL'),
+('sara456', 2, '2025-05-02 12:15:00', 'BUY', 'SUCCESSFUL'),
+('mohammad789', 3, '2025-05-03 09:15:00', 'BUY', 'SUCCESSFUL'),
+('zahra101', 4, '2025-05-03 11:15:00', 'BUY', 'SUCCESSFUL'),
+('reza202', 5, '2025-05-04 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 2 (Tehran to Shiraz - پرواز)
-('leila303', 6, '2025-05-03 10:15:00', 'BUY'),
-('hassan404', 7, '2025-05-03 12:15:00', 'BUY'),
-('nazanin505', 8, '2025-05-04 09:15:00', 'BUY'),
-('amir606', 9, '2025-05-04 11:15:00', 'BUY'),
-('fateme707', 10, '2025-05-05 08:15:00', 'BUY'),
+('leila303', 6, '2025-05-03 10:15:00', 'BUY', 'SUCCESSFUL'),
+('hassan404', 7, '2025-05-03 12:15:00', 'BUY', 'SUCCESSFUL'),
+('nazanin505', 8, '2025-05-04 09:15:00', 'BUY', 'SUCCESSFUL'),
+('amir606', 9, '2025-05-04 11:15:00', 'BUY', 'SUCCESSFUL'),
+('fateme707', 10, '2025-05-05 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 3 (Tehran to Tabriz - پرواز)
-('ahmad808', 11, '2025-05-04 10:15:00', 'BUY'),
-('mahsa909', 12, '2025-05-04 12:15:00', 'BUY'),
-('kaveh1010', 13, '2025-05-05 09:15:00', 'BUY'),
-('sima1111', 14, '2025-05-05 11:15:00', 'BUY'),
-('behnam1212', 15, '2025-05-06 08:15:00', 'BUY'),
+('ahmad808', 11, '2025-05-04 10:15:00', 'BUY', 'SUCCESSFUL'),
+('mahsa909', 12, '2025-05-04 12:15:00', 'BUY', 'SUCCESSFUL'),
+('kaveh1010', 13, '2025-05-05 09:15:00', 'BUY', 'SUCCESSFUL'),
+('sima1111', 14, '2025-05-05 11:15:00', 'BUY', 'SUCCESSFUL'),
+('behnam1212', 15, '2025-05-06 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 4 (Tehran to Ahvaz - پرواز)
-('parisa1313', 16, '2025-05-05 10:15:00', 'BUY'),
-('kamran1414', 17, '2025-05-05 12:15:00', 'BUY'),
-('niloofar1515', 18, '2025-05-06 09:15:00', 'BUY'),
-('arash1616', 19, '2025-05-06 11:15:00', 'BUY'),
-('shirin1717', 20, '2025-05-07 08:15:00', 'BUY'),
+('parisa1313', 16, '2025-05-05 10:15:00', 'BUY', 'SUCCESSFUL'),
+('kamran1414', 17, '2025-05-05 12:15:00', 'BUY', 'SUCCESSFUL'),
+('niloofar1515', 18, '2025-05-06 09:15:00', 'BUY', 'SUCCESSFUL'),
+('arash1616', 19, '2025-05-06 11:15:00', 'BUY', 'SUCCESSFUL'),
+('shirin1717', 20, '2025-05-07 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 5 (Tehran to Kermanshah - پرواز)
-('user1818', 21, '2025-05-06 10:15:00', 'BUY'),
-('user1919', 22, '2025-05-06 12:15:00', 'BUY'),
-('user2020', 23, '2025-05-07 09:15:00', 'BUY'),
-('user2121', 24, '2025-05-07 11:15:00', 'BUY'),
-('user2222', 25, '2025-05-08 08:15:00', 'BUY'),
+('user1818', 21, '2025-05-06 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user1919', 22, '2025-05-06 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user2020', 23, '2025-05-07 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user2121', 24, '2025-05-07 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user2222', 25, '2025-05-08 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 6 (Mashhad to Tehran - پرواز)
-('user2323', 26, '2025-05-07 10:15:00', 'BUY'),
-('user2424', 27, '2025-05-07 12:15:00', 'BUY'),
-('user2525', 28, '2025-05-08 09:15:00', 'BUY'),
-('user2626', 29, '2025-05-08 11:15:00', 'BUY'),
-('user2727', 30, '2025-05-09 08:15:00', 'BUY'),
+('user2323', 26, '2025-05-07 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user2424', 27, '2025-05-07 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user2525', 28, '2025-05-08 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user2626', 29, '2025-05-08 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user2727', 30, '2025-05-09 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 7 (Shiraz to Tabriz - پرواز)
-('user2828', 31, '2025-05-08 10:15:00', 'BUY'),
-('user2929', 32, '2025-05-08 12:15:00', 'BUY'),
-('user3030', 33, '2025-05-09 09:15:00', 'BUY'),
-('user3131', 34, '2025-05-09 11:15:00', 'BUY'),
-('user3232', 35, '2025-05-10 08:15:00', 'BUY'),
+('user2828', 31, '2025-05-08 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user2929', 32, '2025-05-08 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user3030', 33, '2025-05-09 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user3131', 34, '2025-05-09 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user3232', 35, '2025-05-10 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 8 (Ahvaz to Kermanshah - پرواز)
-('user3333', 36, '2025-05-09 10:15:00', 'BUY'),
-('user3434', 37, '2025-05-09 12:15:00', 'BUY'),
-('user3535', 38, '2025-05-10 09:15:00', 'BUY'),
-('user3636', 39, '2025-05-10 11:15:00', 'BUY'),
-('user3737', 40, '2025-05-11 08:15:00', 'BUY'),
+('user3333', 36, '2025-05-09 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user3434', 37, '2025-05-09 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user3535', 38, '2025-05-10 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user3636', 39, '2025-05-10 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user3737', 40, '2025-05-11 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 9 (Tehran to Kerman - پرواز)
-('user3838', 41, '2025-05-10 10:15:00', 'BUY'),
-('user3939', 42, '2025-05-10 12:15:00', 'BUY'),
-('user4040', 43, '2025-05-11 09:15:00', 'BUY'),
-('user4141', 44, '2025-05-11 11:15:00', 'BUY'),
-('user4242', 45, '2025-05-12 08:15:00', 'BUY'),
+('user3838', 41, '2025-05-10 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user3939', 42, '2025-05-10 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user4040', 43, '2025-05-11 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user4141', 44, '2025-05-11 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user4242', 45, '2025-05-12 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 10 (Kerman to Tehran - پرواز)
-('user4343', 46, '2025-05-11 10:15:00', 'BUY'),
-('user4444', 47, '2025-05-11 12:15:00', 'BUY'),
-('user4545', 48, '2025-05-12 09:15:00', 'BUY'),
-('user4646', 49, '2025-05-12 11:15:00', 'BUY'),
-('user4747', 50, '2025-05-13 08:15:00', 'BUY'),
+('user4343', 46, '2025-05-11 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user4444', 47, '2025-05-11 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user4545', 48, '2025-05-12 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user4646', 49, '2025-05-12 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user4747', 50, '2025-05-13 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 11 (Tehran to Shiraz - قطار)
-('user4848', 51, '2025-05-12 10:15:00', 'BUY'),
-('user4949', 52, '2025-05-12 12:15:00', 'BUY'),
-('user5050', 53, '2025-05-13 09:15:00', 'BUY'),
-('user5151', 54, '2025-05-13 11:15:00', 'BUY'),
-('user5252', 55, '2025-05-14 08:15:00', 'BUY'),
+('user4848', 51, '2025-05-12 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user4949', 52, '2025-05-12 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user5050', 53, '2025-05-13 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user5151', 54, '2025-05-13 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user5252', 55, '2025-05-14 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 12 (Tehran to Mashhad - قطار)
-('user5353', 56, '2025-05-13 10:15:00', 'BUY'),
-('user5454', 57, '2025-05-13 12:15:00', 'BUY'),
-('user5555', 58, '2025-05-14 09:15:00', 'BUY'),
-('user5656', 59, '2025-05-14 11:15:00', 'BUY'),
-('user5757', 60, '2025-05-15 08:15:00', 'BUY'),
+('user5353', 56, '2025-05-13 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user5454', 57, '2025-05-13 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user5555', 58, '2025-05-14 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user5656', 59, '2025-05-14 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user5757', 60, '2025-05-15 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 13 (Tehran to Tabriz - قطار)
-('user5858', 61, '2025-05-14 10:15:00', 'BUY'),
-('user5959', 62, '2025-05-14 12:15:00', 'BUY'),
-('user6060', 63, '2025-05-15 09:15:00', 'BUY'),
-('user6161', 64, '2025-05-15 11:15:00', 'BUY'),
-('user6262', 65, '2025-05-16 08:15:00', 'BUY'),
+('user5858', 61, '2025-05-14 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user5959', 62, '2025-05-14 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user6060', 63, '2025-05-15 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user6161', 64, '2025-05-15 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user6262', 65, '2025-05-16 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 14 (Tehran to Ahvaz - قطار)
-('user6363', 66, '2025-05-15 10:15:00', 'BUY'),
-('user6464', 67, '2025-05-15 12:15:00', 'BUY'),
-('user6565', 68, '2025-05-16 09:15:00', 'BUY'),
-('user6666', 69, '2025-05-16 11:15:00', 'BUY'),
-('user6767', 70, '2025-05-17 08:15:00', 'BUY'),
+('user6363', 66, '2025-05-15 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user6464', 67, '2025-05-15 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user6565', 68, '2025-05-16 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user6666', 69, '2025-05-16 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user6767', 70, '2025-05-17 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 15 (Mashhad to Tehran - قطار)
-('user6868', 71, '2025-05-16 10:15:00', 'BUY'),
-('user6969', 72, '2025-05-16 12:15:00', 'BUY'),
-('user7070', 73, '2025-05-17 09:15:00', 'BUY'),
-('user7171', 74, '2025-05-17 11:15:00', 'BUY'),
-('user7272', 75, '2025-05-18 08:15:00', 'BUY'),
+('user6868', 71, '2025-05-16 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user6969', 72, '2025-05-16 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user7070', 73, '2025-05-17 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user7171', 74, '2025-05-17 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user7272', 75, '2025-05-18 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 16 (Tehran to Karaj - اتوبوس)
-('user7373', 76, '2025-05-17 10:15:00', 'BUY'),
-('user7474', 77, '2025-05-17 12:15:00', 'BUY'),
-('user7575', 78, '2025-05-18 09:15:00', 'BUY'),
-('user7676', 79, '2025-05-18 11:15:00', 'BUY'),
-('user7777', 80, '2025-05-19 08:15:00', 'BUY'),
+('user7373', 76, '2025-05-17 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user7474', 77, '2025-05-17 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user7575', 78, '2025-05-18 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user7676', 79, '2025-05-18 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user7777', 80, '2025-05-19 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 17 (Tehran to Varamin - اتوبوس)
-('user7878', 81, '2025-05-18 10:15:00', 'BUY'),
-('user7979', 82, '2025-05-18 12:15:00', 'BUY'),
-('user8080', 83, '2025-05-19 09:15:00', 'BUY'),
-('user8181', 84, '2025-05-19 11:15:00', 'BUY'),
-('user8282', 85, '2025-05-20 08:15:00', 'BUY'),
+('user7878', 81, '2025-05-18 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user7979', 82, '2025-05-18 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user8080', 83, '2025-05-19 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user8181', 84, '2025-05-19 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user8282', 85, '2025-05-20 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 18 (Tehran to Rey - اتوبوس)
-('user8383', 86, '2025-05-19 10:15:00', 'BUY'),
-('user8484', 87, '2025-05-19 12:15:00', 'BUY'),
-('user8585', 88, '2025-05-20 09:15:00', 'BUY'),
-('user8686', 89, '2025-05-20 11:15:00', 'BUY'),
-('user8787', 90, '2025-05-21 08:15:00', 'BUY'),
+('user8383', 86, '2025-05-19 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user8484', 87, '2025-05-19 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user8585', 88, '2025-05-20 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user8686', 89, '2025-05-20 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user8787', 90, '2025-05-21 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 19 (Tehran to Isfahan - اتوبوس)
-('user8888', 91, '2025-05-20 10:15:00', 'BUY'),
-('user8989', 92, '2025-05-20 12:15:00', 'BUY'),
-('user9090', 93, '2025-05-21 09:15:00', 'BUY'),
-('user9191', 94, '2025-05-21 11:15:00', 'BUY'),
-('user9292', 95, '2025-05-22 08:15:00', 'BUY'),
+('user8888', 91, '2025-05-20 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user8989', 92, '2025-05-20 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user9090', 93, '2025-05-21 09:15:00', 'BUY', 'SUCCESSFUL'),
+('user9191', 94, '2025-05-21 11:15:00', 'BUY', 'SUCCESSFUL'),
+('user9292', 95, '2025-05-22 08:15:00', 'BUY', 'SUCCESSFUL'),
 -- تاریخچه برای رزروهای تیکت 20 (Isfahan to Tehran - اتوبوس)
-('user9393', 96, '2025-05-21 10:15:00', 'BUY'),
-('user9494', 97, '2025-05-21 12:15:00', 'BUY'),
-('user9595', 98, '2025-05-22 09:15:00', 'BUY'),
-('ali123', 99, '2025-05-22 11:15:00', 'BUY'),
-('sara456', 100, '2025-05-23 08:15:00', 'BUY');
+('user9393', 96, '2025-05-21 10:15:00', 'BUY', 'SUCCESSFUL'),
+('user9494', 97, '2025-05-21 12:15:00', 'BUY', 'SUCCESSFUL'),
+('user9595', 98, '2025-05-22 09:15:00', 'BUY', 'SUCCESSFUL'),
+('ali123', 99, '2025-05-22 11:15:00', 'BUY', 'SUCCESSFUL'),
+('sara456', 100, '2025-05-23 08:15:00', 'BUY', 'SUCCESSFUL');
 
-update reservations_history
-set "reservation_history_status" = 'SUCCESSFUL'
 
 
 -- افزودن 30 گزارش
-    INSERT
-INTO reports (username, reservation_id, report_type, report_text)
+INSERT INTO reports (username, reservation_id, report_type, report_text)
 VALUES
 -- گزارش‌های نوع PAYMENT
     ('ali123', 1, 'PAYMENT', 'پرداخت من دو بار کسر شده است، لطفاً بررسی کنید.'), ('sara456', 2, 'PAYMENT', 'مبلغ پرداخت با تیکت مطابقت ندارد.'), ('mohammad789', 3, 'PAYMENT', 'تراکنش پرداخت ناموفق بود اما رزرو ثبت شده است.'),
@@ -1000,16 +997,16 @@ VALUES ('mehdi2121', 21, 'RESERVED', '2025-4-8 10:00:00', 1),
        (NULL, 21, 'NOT_RESERVED', null, 10);
 
 INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method)
-VALUES ('mehdi2121', 101, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD'),
-       ('mehdi2121', 102, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD'),
-       ('mehdi2121', 103, 3000000, 'PAID', '2025-04-08 10:07:00', 'CREDIT_CARD'),
+VALUES ('mehdi2121', 101, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
+       ('mehdi2121', 102, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
+       ('mehdi2121', 103, 3000000, 'SUCCESSFUL', '2025-04-08 10:07:00', 'CREDIT_CARD'),
        ('narges2222', 104, 3000000, 'NOT_PAID', '2025-04-07 16:30:00', 'WALLET'),
-       ('narges2222', 104, 3000000, 'PAID', '2025-04-07 20:10:00', 'CREDIT_CARD'),
-       ('narges2222', 105, 3000000, 'PAID', '2025-04-07 20:10:00', 'CREDIT_CARD'),
-       ('elnaz2828', 106, 3000000, 'PAID', '2025-04-09 02:05:00', 'CREDIT_CARD'),
-       ('golnaz3434', 107, 3000000, 'PAID', '2025-04-09 23:01:00', 'CREDIT_CARD');
+       ('narges2222', 104, 3000000, 'SUCCESSFUL', '2025-04-07 20:10:00', 'CREDIT_CARD'),
+       ('narges2222', 105, 3000000, 'SUCCESSFUL', '2025-04-07 20:10:00', 'CREDIT_CARD'),
+       ('elnaz2828', 106, 3000000, 'SUCCESSFUL', '2025-04-09 02:05:00', 'CREDIT_CARD'),
+       ('golnaz3434', 107, 3000000, 'SUCCESSFUL', '2025-04-09 23:01:00', 'CREDIT_CARD');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status)
 VALUES ('mehdi2121', 101, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
        ('mehdi2121', 102, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
        ('mehdi2121', 103, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
@@ -1019,14 +1016,14 @@ VALUES ('mehdi2121', 101, '2025-04-08 10:07:00', 'BUY', 'SUCCESSFUL'),
        ('elnaz2828', 106, '2025-04-09 02:05:00', 'BUY', 'SUCCESSFUL'),
        ('golnaz3434', 107, '2025-04-09 23:01:00', 'BUY', 'SUCCESSFUL');
 
--- PAID AND CANCEL IT
-insert into INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method)
+-- SUCCESSFUL AND CANCEL IT
+INSERT INTO payments (username, reservation_id, amount_paid, payment_status, date_and_time_of_payment, payment_method)
 VALUES
-    ('parvaneh4040', 108, 3000000, 'PAID', '2024-04-06 12:00:00', 'WALLET');
+    ('parvaneh4040', 108, 3000000, 'SUCCESSFUL', '2024-04-06 12:00:00', 'WALLET');
 
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
-VALUES ('parvaneh4040', 108, '2024-04-06 12:00:00', 'BUY', 'SUCCESSFUL'),
-       ('parvaneh4040', 108, '2024-04-06 12:10:00', 'CANCEL', 'CANCELED');
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, buy_status, cancel_by)
+VALUES ('parvaneh4040', 108, '2024-04-06 12:00:00', 'BUY', 'SUCCESSFUL',null),
+       ('parvaneh4040', 108, '2024-04-06 12:10:00', 'CANCEL', null,'admin1' );
 
 INSERT INTO reports (username, reservation_id, report_type, report_text)
 VALUES ('golnaz3434', 22, 'OTHER', 'test');
@@ -1040,9 +1037,10 @@ values ('mehdi2121', 101, 'CANCEL', 'test', TRUE, FALSE, 'admin1'),
        ('mehdi2121', 110, 'CANCEL', 'test', TRUE, TRUE, 'admin2'),
        ('narges2222', 105, 'CANCEL', 'test', TRUE, FALSE, 'admin2'),
        ('narges2222', 109, 'CANCEL', 'test', TRUE, TRUE, 'admin1');
-INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type, reservation_history_status)
-VALUES ('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'CANCELED'),
-       ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'CANCELED');
+
+INSERT INTO reservations_history (username, reservation_id, date_and_time, operation_type,cancel_by)
+VALUES ('mehdi2121', 110, '2024-03-01 12:00:00', 'CANCEL', 'admin1'),
+       ('narges2222', 109, '2024-03-01 12:10:00', 'CANCEL', 'admin1');
 
 
 -- افزودن 30 گزارش
@@ -1050,3 +1048,19 @@ INSERT INTO reports (username, reservation_id, report_type, report_text)
 VALUES
 -- گزارش‌های نوع PAYMENT
 ('ali123', 1, 'PAYMENT', 'IUFHJ');
+
+
+-- new ticket
+WITH new_ticket AS (
+    INSERT INTO tickets (vehicle_id, origin_location_id, destination_location_id, departure_start, departure_end, price, total_capacity, remaining_capacity)
+    VALUES (76, 1, 21, '2025-07-10 23:00:00', '2025-07-11 03:00:00', 450000, 20, 20)
+    RETURNING ticket_id
+)
+
+INSERT INTO reservations (ticket_id, reservation_status, username, date_and_time_of_reservation, reservation_seat)
+SELECT
+    (SELECT ticket_id FROM new_ticket),
+    'NOT_RESERVED',
+    NULL,
+    NULL,
+    generate_series(1, 20);

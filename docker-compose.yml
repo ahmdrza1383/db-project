@@ -1,7 +1,6 @@
 version: '3.9'
 
 services:
-  # Django Web Application
   web:
     build: .
     command: python manage.py runserver 0.0.0.0:8000
@@ -11,19 +10,26 @@ services:
       - "8000:8000"
     depends_on:
       - db
+      - redis
     environment:
-      - DJANGO_SETTINGS_MODULE=config.settings  # Define Django settings module
-      - DEBUG=True  # Set to False in production
-      - DATABASE_URL=postgres://postgres@db:5432/mydatabase  # Example DB connection
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - DEBUG=True
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=mydatabase
+      - POSTGRES_PASSWORD=1234
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
-  # PostgreSQL Database
   db:
     image: postgres:17-alpine
     restart: always
     container_name: mydatabase
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_DB: mydatabase
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=mydatabase
+      - POSTGRES_PASSWORD=1234
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./pg_hba.conf:/etc/postgresql/pg_hba.conf
@@ -31,5 +37,33 @@ services:
       - "5433:5432"
     command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
 
+  redis:
+    image: redis:7-alpine
+    container_name: myredis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  celery:
+    build: .
+    command: celery -A config worker --loglevel=info
+    volumes:
+      - .:/code
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=mydatabase
+      - POSTGRES_PASSWORD=1234
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
 volumes:
   postgres_data:
+  redis_data:
