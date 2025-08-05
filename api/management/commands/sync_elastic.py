@@ -66,14 +66,12 @@ class Command(BaseCommand):
 
                 source_doc = {k: v for k, v in row_dict.items() if v is not None}
 
-
                 for facility_key in ['flight_facility', 'train_facility', 'bus_facility']:
                     if facility_key in source_doc and isinstance(source_doc[facility_key], str):
                         try:
                             source_doc[facility_key] = json.loads(source_doc[facility_key])
                         except json.JSONDecodeError:
                             source_doc[facility_key] = {}  # Default to empty object on error
-
 
                 if "ticket_id" not in source_doc:
                     self.stderr.write(self.style.WARNING(f"Skipping a row because it has no ticket_id: {row_dict}"))

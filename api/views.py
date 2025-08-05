@@ -1,3 +1,4 @@
+import os
 import redis
 from django.conf import settings
 from django.http import JsonResponse, Http404
@@ -25,29 +26,7 @@ from elasticsearch import Elasticsearch, NotFoundError
 
 from .auth_utils import *
 from .tasks import expire_reservation
-
-
-def update_ticket_in_elastic(ticket_id: int, updates: dict):
-    """
-    Updates a specific ticket document in Elasticsearch.
-
-    Args:
-        ticket_id: The ID of the ticket to update.
-        updates: A dictionary containing the fields to update.
-                 Example: {"remaining_capacity": 19}
-    """
-    try:
-        es_host = os.environ.get("ELASTICSEARCH_HOST", "localhost")
-        es_client = Elasticsearch(
-            hosts=[{"host": es_host, "port": 9200, "scheme": "http"}]
-        )
-        if es_client.ping():
-            es_client.update(index="tickets", id=ticket_id, doc=updates)
-            print(f"Successfully updated ticket {ticket_id} in Elasticsearch with: {updates}")
-    except NotFoundError:
-        print(f"Warning: Ticket with ID {ticket_id} not found in Elasticsearch. Could not update.")
-    except Exception as e:
-        print(f"ERROR: Failed to update ticket {ticket_id} in Elasticsearch: {e}")
+from .elastic_utils import update_ticket_in_elastic
 
 
 def generate_otp(length=6):
@@ -1373,37 +1352,6 @@ def reserve_ticket_view(request):
                     f"Celery task scheduled for reservation_id {reservation_id_to_monitor} to run in {expiry_minutes_setting} minutes.")
 
             if redis_client:
-                ticket_details_cache_key = f"ticket_details:{ticket_id}"
-                try:
-                    cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
-                    if cached_ticket_details_json:
-                        cached_ticket_data = json.loads(cached_ticket_details_json)
-
-                        cached_ticket_data['remaining_capacity'] = new_remaining_capacity
-
-                        current_ttl = redis_client.ttl(ticket_details_cache_key)
-                        if current_ttl > 0:
-                            redis_client.setex(
-                                ticket_details_cache_key,
-                                current_ttl,
-                                json.dumps(cached_ticket_data)
-                            )
-                            print(
-                                f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
-                        else:
-                            redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
-                            print(
-                                f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
-                    else:
-                        print(
-                            f"Ticket details for {ticket_id} not found in cache during reservation. Not updating cache.")
-
-                except redis.exceptions.RedisError as re_cache_err:
-                    print(f"Redis error during updating ticket details cache: {re_cache_err}")
-                except Exception as e:
-                    print(f"Error processing ticket details cache in reserve_ticket_view: {e}")
-
-            if redis_client:
                 redis_key = f"temp_reservation:{reservation_id_to_monitor}"
 
                 reservation_for_cache = reservation_outcome_details.copy()
@@ -2375,38 +2323,6 @@ def admin_approve_request_view(request, request_id):
                         lambda: update_ticket_in_elastic(final_ticket_id,
                                                          {"remaining_capacity": new_remaining_capacity})
                     )
-
-                    if redis_client:
-                        ticket_details_cache_key = f"ticket_details:{data_dict['ticket_id']}"
-                        try:
-                            cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
-                            if cached_ticket_details_json:
-                                cached_ticket_data = json.loads(cached_ticket_details_json)
-
-                                cached_ticket_data['remaining_capacity'] = new_remaining_capacity
-
-                                current_ttl = redis_client.ttl(ticket_details_cache_key)
-                                if current_ttl > 0:
-                                    redis_client.setex(
-                                        ticket_details_cache_key,
-                                        current_ttl,
-                                        json.dumps(cached_ticket_data)
-                                    )
-                                    print(
-                                        f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
-                                else:
-                                    redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
-                                    print(
-                                        f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
-                            else:
-                                print(
-                                    f"Ticket details for {data_dict['ticket_id']} not found in cache during cancellation. Not updating cache.")
-
-                        except redis.exceptions.RedisError as re_cache_err:
-                            print(
-                                f"Redis error during updating ticket details cache in admin_approve_request_view: {re_cache_err}")
-                        except Exception as e:
-                            print(f"Error processing ticket details cache in admin_approve_request_view: {e}")
 
                     cursor.execute(
                         """

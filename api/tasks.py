@@ -7,7 +7,7 @@ import json
 import redis
 from django.conf import settings
 
-from api.views import update_ticket_in_elastic
+from .elastic_utils import update_ticket_in_elastic
 
 redis_client = None
 try:
@@ -87,38 +87,6 @@ def expire_reservation(reservation_id):
                     f"Reservation {reservation_id} expired and ticket {ticket_id_for_revert} updated to new capacity {new_remaining_capacity}. Transaction committed.")
 
                 update_ticket_in_elastic(ticket_id_for_revert, {"remaining_capacity": new_remaining_capacity})
-
-                if redis_client:
-                    ticket_details_cache_key = f"ticket_details:{ticket_id_for_revert}"
-                    try:
-                        cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
-                        if cached_ticket_details_json:
-                            cached_ticket_data = json.loads(cached_ticket_details_json)
-
-                            cached_ticket_data['remaining_capacity'] = new_remaining_capacity
-
-                            current_ttl = redis_client.ttl(ticket_details_cache_key)
-                            if current_ttl > 0:
-                                redis_client.setex(
-                                    ticket_details_cache_key,
-                                    current_ttl,
-                                    json.dumps(cached_ticket_data)
-                                )
-                                print(
-                                    f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
-                            else:
-                                redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
-                                print(
-                                    f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
-
-                        else:
-                            print(
-                                f"Ticket details for {ticket_id_for_revert} not found in cache during expiry. Not updating cache.")
-
-                    except redis.exceptions.RedisError as re_cache_err:
-                        print(f"Redis error during updating ticket details cache in expire_reservation: {re_cache_err}")
-                    except Exception as e:
-                        print(f"Error processing ticket details cache in expire_reservation: {e}")
 
             else:
                 print(f"Reservation {reservation_id} is not expired yet (time difference is less than 10 minutes).")
