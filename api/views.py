@@ -788,6 +788,27 @@ def update_user_profile_view(request):
         print(f"Unexpected error in update_user_profile_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def get_user_profile_view(request):
+    """
+    Retrieves and returns the profile information for the authenticated user.
+    """
+    current_username = request.user_payload.get('sub')
+    if not current_username:
+        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username not found in token payload.'},
+                            status=401)
+
+    try:
+        user_profile = get_user_profile(current_username)
+        if user_profile:
+            return JsonResponse({'status': 'success', 'user_info': user_profile})
+        else:
+            return JsonResponse({'status': 'error', 'message': 'User not found.'}, status=404)
+    except Exception as e:
+        print(f"Error fetching user profile: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
 @csrf_exempt
 @require_http_methods(["GET"])
