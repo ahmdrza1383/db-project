@@ -21,7 +21,7 @@ function VerifyOtp({ identifier }) {
             localStorage.setItem('refreshToken', refresh_token);
             localStorage.setItem('userInfo', JSON.stringify(user_info));
 
-            window.location.href = '/';
+            window.location.href = '/dashboard';
 
         } catch (err) {
             const errorMessage = err.response?.data?.message || 'خطا در تایید کد.';
