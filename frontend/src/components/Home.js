@@ -1,12 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './Home.css';
 
-const popularDestinations = [
-  { id: 1, name: 'استانبول', image: 'https://images.unsplash.com/photo-1542454655-cfb29b67484b?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3', price: '۳,۰۰۰,۰۰۰ تومان' },
-  { id: 2, name: 'دبی', image: 'https://images.unsplash.com/photo-1542454655-cfb29b67484b?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3', price: '۴,۵۰۰,۰۰۰ تومان' },
-  { id: 3, name: 'کیش', image: 'https://www.google.com/url?sa=i&url=https%3A%2F%2Fwww.iranhotelonline.com%2Fblog%2Fpost-511%2F%25D8%25AC%25D8%25A7%25D9%2587%25D8%25A7%25DB%258C-%25D8%25AF%25DB%258C%25D8%25AF%25D9%2586%25DB%258C-%25DA%25A9%25DB%258C%25D8%25B4-%25D8%25AF%25DB%258C%25D8%25AF%25D9%2586%25DB%258C-%25D9%2587%25D8%25A7%25DB%258C-%25DA%25A9%25DB%258C%25D8%25B4-%25D8%25A8%25D8%25A7-%25D8%25B9%25DA%25A9%25D8%25B3-%25D9%2588-%25D8%25A2%25D8%25AF%25D8%25B1%25D8%25B3%2F&psig=AOvVaw2idMA5kWk4ICn5w3CM9_hL&ust=1754650582684000&source=images&cd=vfe&opi=89978449&ved=0CBUQjRxqFwoTCKiM8vfE-I4DFQAAAAAdAAAAABAE', price: '۱,۵۰۰,۰۰۰ تومان' },
-  { id: 4, name: 'شیراز', image: 'https://images.unsplash.com/photo-1542454655-cfb29b67484b?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3', price: '۹۰۰,۰۰۰ تومان' },
-];
+
 
 const Home = () => {
   // فرم جستجو states
@@ -328,102 +323,168 @@ const Home = () => {
         </div>
       </main>
 
-      {/* لیست بلیط‌های فروخته نشده */}
+      {/* لیست بلیط‌های فروخته نشده (طراحی جدید) */}
       <section className="available-tickets-section">
         <h2>بلیط‌های فروخته نشده</h2>
-        {availableTickets.length === 0 && <p>بلیط فروخته نشده‌ای موجود نیست.</p>}
-        <div className="results-list">
+        {availableTickets.length === 0 && <p className="no-tickets-message">بلیط فروخته نشده‌ای موجود نیست.</p>}
+        <div className="available-tickets-grid">
           {availableTickets.map(ticket => (
             <div
               key={ticket.ticket_id}
-              className="ticket-card"
-              style={{cursor: 'pointer'}}
+              className="available-ticket-card"
               onClick={() => fetchTicketDetails(ticket.ticket_id)}
             >
-              <h3>{ticket.origin_city} به {ticket.destination_city}</h3>
-              <p>تاریخ حرکت: {ticket.departure_start?.slice(0, 10)}</p>
-              <p>قیمت: {ticket.price.toLocaleString()} تومان</p>
-              <p>نوع وسیله: {ticket.vehicle_type}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* نمایش جزئیات بلیط فروخته نشده انتخاب شده */}
-      {selectedTicket && (
-        <section className="ticket-details-popup">
-          {detailsLoading && <p>در حال بارگذاری جزئیات...</p>}
-          {detailsError && <p style={{color: 'red'}}>خطا: {detailsError}</p>}
-          {!detailsLoading && !detailsError && (
-            <>
-              <h2>جزئیات بلیط</h2>
-              <p>مبدا: {selectedTicket.origin_city}</p>
-              <p>مقصد: {selectedTicket.destination_city}</p>
-              <p>تاریخ حرکت: {selectedTicket.departure_start?.slice(0, 10)}</p>
-              <p>قیمت: {selectedTicket.price.toLocaleString()} تومان</p>
-              <p>ظرفیت کل: {selectedTicket.total_capacity}</p>
-              <p>ظرفیت باقی‌مانده: {selectedTicket.remaining_capacity}</p>
-              <p>وضعیت بلیط: {selectedTicket.ticket_status ? 'فروخته شده' : 'فروخته نشده'}</p>
-              <p>نوع وسیله نقلیه: {selectedTicket.vehicle_type}</p>
-
-              {selectedTicket.vehicle_type === 'FLIGHT' && selectedTicket.vehicle_details && (
-                <>
-                  <p>خط هوایی: {selectedTicket.vehicle_details.airline_name}</p>
-                  <p>کلاس پرواز: {selectedTicket.vehicle_details.flight_class}</p>
-                  <p>تعداد توقف: {selectedTicket.vehicle_details.number_of_stop}</p>
-                  <p>کد پرواز: {selectedTicket.vehicle_details.flight_code}</p>
-                  <p>فرودگاه مبدا: {selectedTicket.vehicle_details.origin_airport}</p>
-                  <p>فرودگاه مقصد: {selectedTicket.vehicle_details.destination_airport}</p>
-                  <p>امکانات: {JSON.stringify(selectedTicket.vehicle_details.facility)}</p>
-                </>
-              )}
-
-              {selectedTicket.vehicle_type === 'TRAIN' && selectedTicket.vehicle_details && (
-                <>
-                  <p>ستاره قطار: {selectedTicket.vehicle_details.train_stars}</p>
-                  <p>انتخاب کوپه بسته: {selectedTicket.vehicle_details.choosing_a_closed_coupe ? 'بله' : 'خیر'}</p>
-                  <p>امکانات: {JSON.stringify(selectedTicket.vehicle_details.facility)}</p>
-                </>
-              )}
-
-              {selectedTicket.vehicle_type === 'BUS' && selectedTicket.vehicle_details && (
-                <>
-                  <p>نام شرکت: {selectedTicket.vehicle_details.company_name}</p>
-                  <p>نوع اتوبوس: {selectedTicket.vehicle_details.bus_type}</p>
-                  <p>تعداد صندلی‌ها: {selectedTicket.vehicle_details.number_of_chairs}</p>
-                  <p>امکانات: {JSON.stringify(selectedTicket.vehicle_details.facility)}</p>
-                </>
-              )}
-
-              <h3>رزروها</h3>
-              <ul>
-                {selectedTicket.reservations.map(res => (
-                  <li key={res.reservation_id}>
-                    شماره رزرو: {res.reservation_id} - وضعیت: {res.reservation_status} - صندلی: {res.reservation_seat}
-                  </li>
-                ))}
-              </ul>
-
-              <button onClick={() => setSelectedTicket(null)}>بستن جزئیات</button>
-            </>
-          )}
-        </section>
-      )}
-
-      <section className="popular-section">
-        <h2>مقاصد پرطرفدار</h2>
-        <div className="destination-cards">
-          {popularDestinations.map(dest => (
-            <div key={dest.id} className="destination-card">
-              <img src={dest.image} alt={dest.name} className="card-image" />
-              <div className="card-info">
-                <h3>{dest.name}</h3>
-                <p>{dest.price}</p>
+              <div className="ticket-header">
+                <span className="ticket-type">{ticket.vehicle_type === 'FLIGHT' ? '✈️ پرواز' : ticket.vehicle_type === 'TRAIN' ? '🚆 قطار' : '🚌 اتوبوس'}</span>
+                <span className="ticket-price">
+                  <strong>{ticket.price.toLocaleString()}</strong> تومان
+                </span>
+              </div>
+              <div className="ticket-body">
+                <div className="ticket-route">
+                  <div className="ticket-city">{ticket.origin_city}</div>
+                  <span className="route-icon">➡️</span>
+                  <div className="ticket-city">{ticket.destination_city}</div>
+                </div>
+                <div className="ticket-info">
+                  <div className="info-item">
+                    <span>تاریخ حرکت:</span>
+                    <strong>{ticket.departure_start?.slice(0, 10)}</strong>
+                  </div>
+                </div>
               </div>
             </div>
           ))}
         </div>
       </section>
+
+      {/* نمایش جزئیات بلیط فروخته نشده انتخاب شده (طراحی جدید) */}
+      {selectedTicket && (
+        <section className="ticket-details-popup">
+          {detailsLoading && <p>در حال بارگذاری جزئیات...</p>}
+          {detailsError && <p style={{ color: 'red' }}>خطا: {detailsError}</p>}
+          {!detailsLoading && !detailsError && (
+            <>
+              <div className="details-header">
+                <h2>جزئیات بلیط</h2>
+                <button className="close-btn" onClick={() => setSelectedTicket(null)}>
+                  ✖️
+                </button>
+              </div>
+              <div className="details-body">
+                <div className="detail-row">
+                  <span>مبدا:</span>
+                  <strong>{selectedTicket.origin_city}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>مقصد:</span>
+                  <strong>{selectedTicket.destination_city}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>تاریخ حرکت:</span>
+                  <strong>{selectedTicket.departure_start?.slice(0, 10)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>قیمت:</span>
+                  <strong>{selectedTicket.price.toLocaleString()} تومان</strong>
+                </div>
+                <div className="detail-row">
+                  <span>ظرفیت باقی‌مانده:</span>
+                  <strong>{selectedTicket.remaining_capacity}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>نوع وسیله نقلیه:</span>
+                  <strong>{selectedTicket.vehicle_type}</strong>
+                </div>
+              </div>
+
+              {selectedTicket.vehicle_type === 'FLIGHT' && selectedTicket.vehicle_details && (
+                <>
+                  <div className="detail-row">
+                    <span>خط هوایی:</span>
+                    <strong>{selectedTicket.vehicle_details.airline_name}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>کلاس پرواز:</span>
+                    <strong>{selectedTicket.vehicle_details.flight_class}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>تعداد توقف:</span>
+                    <strong>{selectedTicket.vehicle_details.number_of_stop}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>کد پرواز:</span>
+                    <strong>{selectedTicket.vehicle_details.flight_code}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>فرودگاه مبدا:</span>
+                    <strong>{selectedTicket.vehicle_details.origin_airport}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>فرودگاه مقصد:</span>
+                    <strong>{selectedTicket.vehicle_details.destination_airport}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>امکانات:</span>
+                    <strong>{JSON.stringify(selectedTicket.vehicle_details.facility)}</strong>
+                  </div>
+                </>
+              )}
+              {selectedTicket.vehicle_type === 'TRAIN' && selectedTicket.vehicle_details && (
+                <>
+                  <div className="detail-row">
+                    <span>ستاره قطار:</span>
+                    <strong>{selectedTicket.vehicle_details.train_stars}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>انتخاب کوپه بسته:</span>
+                    <strong>{selectedTicket.vehicle_details.choosing_a_closed_coupe ? 'بله' : 'خیر'}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>امکانات:</span>
+                    <strong>{JSON.stringify(selectedTicket.vehicle_details.facility)}</strong>
+                  </div>
+                </>
+              )}
+              {selectedTicket.vehicle_type === 'BUS' && selectedTicket.vehicle_details && (
+                <>
+                  <div className="detail-row">
+                    <span>نام شرکت:</span>
+                    <strong>{selectedTicket.vehicle_details.company_name}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>نوع اتوبوس:</span>
+                    <strong>{selectedTicket.vehicle_details.bus_type}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>تعداد صندلی‌ها:</span>
+                    <strong>{selectedTicket.vehicle_details.number_of_chairs}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>امکانات:</span>
+                    <strong>{JSON.stringify(selectedTicket.vehicle_details.facility)}</strong>
+                  </div>
+                </>
+              )}
+
+              <h3>رزروها</h3>
+              <ul className="reservation-list">
+                {selectedTicket.reservations.map(res => (
+                  <li key={res.reservation_id}>
+                    <strong>شماره رزرو:</strong> {res.reservation_id}
+                    <span>-</span>
+                    <strong>وضعیت:</strong> {res.reservation_status}
+                    <span>-</span>
+                    <strong>صندلی:</strong> {res.reservation_seat}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
+
+
 
       <footer className="main-footer">
         <div className="footer-links">
@@ -441,4 +502,3 @@ const Home = () => {
 };
 
 export default Home;
-

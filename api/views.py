@@ -1200,7 +1200,7 @@ def available_tickets_view(request):
         INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
         INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
         INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
-        WHERE t.to = FALSE
+        WHERE remaining_capacity > 0
         ORDER BY t.departure_start ASC
         LIMIT 100;
     """
