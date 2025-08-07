@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from .views import available_tickets_view
 
 app_name = 'api-test'
 
@@ -10,6 +11,7 @@ urlpatterns = [
     path('user-signup/', views.user_signup_view, name='user-signup'),
     path('user-update-profile/', views.update_user_profile_view, name='user-update-profile'),
     path('ticket-details/<int:ticket_id>/', views.get_ticket_details_view, name='ticket-details'),
+    path('available-tickets/', available_tickets_view, name='available-tickets'),
     path('cities-list/', views.get_cities_list_view, name='cities-list'),
     path('search-tickets/', views.search_tickets_view, name='search-tickets'),
     path('reserve-ticket/', views.reserve_ticket_view, name='reserve-ticket'),

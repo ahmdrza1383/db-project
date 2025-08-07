@@ -17,11 +17,12 @@ function VerifyOtp({ identifier }) {
             });
 
             const { access_token, refresh_token, user_info } = response.data;
+
             localStorage.setItem('accessToken', access_token);
             localStorage.setItem('refreshToken', refresh_token);
             localStorage.setItem('userInfo', JSON.stringify(user_info));
 
-            window.location.href = '/dashboard';
+            window.location.href = '/'; // بازگشت به صفحه Home
 
         } catch (err) {
             const errorMessage = err.response?.data?.message || 'خطا در تایید کد.';
@@ -32,9 +33,7 @@ function VerifyOtp({ identifier }) {
     return (
         <Container maxWidth="xs">
             <Box sx={{ marginTop: 8, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                <Typography component="h1" variant="h5">
-                    تایید کد یکبار مصرف
-                </Typography>
+                <Typography component="h1" variant="h5">تایید کد یکبار مصرف</Typography>
                 <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
                     کد ارسال شده به {identifier} را وارد کنید.
                 </Typography>

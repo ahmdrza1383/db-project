@@ -1186,6 +1186,46 @@ def get_ticket_details_view(request, ticket_id):
         print(f"Unexpected error in get_ticket_details_view for ticket_id {ticket_id}: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
+@csrf_exempt
+@require_http_methods(["GET"])
+def available_tickets_view(request):
+    query = """
+        SELECT t.ticket_id,
+               t.departure_start,
+               t.price,
+               origin_loc.city AS origin_city,
+               dest_loc.city AS destination_city,
+               v.vehicle_type
+        FROM tickets t
+        INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
+        INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
+        INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+        WHERE t.to = FALSE
+        ORDER BY t.departure_start ASC
+        LIMIT 100;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            tickets = []
+            for row in rows:
+                ticket = dict(zip(columns, row))
+                # تبدیل تاریخ به رشته ISO (اگر لازم بود)
+                if ticket.get('departure_start') and hasattr(ticket['departure_start'], 'isoformat'):
+                    ticket['departure_start'] = ticket['departure_start'].isoformat()
+                tickets.append(ticket)
+
+        return JsonResponse({'status': 'success', 'data': tickets})
+    except DatabaseError as e:
+        print(f"Database error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Database error occurred.'}, status=500)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Unexpected error occurred.'}, status=500)
+
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -3098,3 +3138,5 @@ def admin_get_reports_view(request):
     except Exception as e:
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
