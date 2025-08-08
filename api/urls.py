@@ -1,7 +1,7 @@
 from django.urls import path
 
 from . import views
-from .views import available_tickets_view
+from .views import available_tickets_view, get_user_temp_reservations_sql
 
 app_name = 'api-test'
 
@@ -27,4 +27,5 @@ urlpatterns = [
     path('admin/reports/<int:report_id>/manage/', views.admin_manage_report_view, name='admin-manage-report'),
     path('admin/reports/', views.admin_get_reports_view, name='admin-get-reports'),
     path('user-profile/', views.get_user_profile_view, name='user-profile'),
+    path('temporary-reservations/', get_user_temp_reservations_sql, name='temporary-reservations'),
 ]

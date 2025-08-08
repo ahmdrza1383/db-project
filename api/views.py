@@ -1,6 +1,7 @@
 import os
 import redis
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
@@ -3139,4 +3140,28 @@ def admin_get_reports_view(request):
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
+
+@login_required
+def get_user_temp_reservations_sql(request):
+    user_id = request.user.id
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT reservation_id, ticket_id, reservation_seat, reserved_at, expires_in_minutes
+            FROM reservations
+            WHERE user_id = %s AND reservation_status = 'TEMPORARY'
+        """, [user_id])
+        rows = cursor.fetchall()
+
+    # تبدیل نتیجه به دیکشنری
+    reservations = []
+    for row in rows:
+        reservations.append({
+            'reservation_id': row[0],
+            'ticket_id': row[1],
+            'reservation_seat': row[2],
+            'reserved_at': row[3].isoformat() if row[3] else None,
+            'expires_in_minutes': row[4],
+        })
+
+    return JsonResponse({'status': 'success', 'data': reservations})
 

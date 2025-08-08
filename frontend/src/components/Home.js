@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './Home.css';
 
-
-
 const Home = () => {
   // فرم جستجو states
   const [origin, setOrigin] = useState('');
@@ -23,33 +21,103 @@ const Home = () => {
 
   // بلیط‌های فروخته نشده
   const [availableTickets, setAvailableTickets] = useState([]);
+
   // جزئیات بلیط انتخاب شده از لیست فروخته نشده
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState(null);
 
-  // وضعیت ورود
+  // صندلی‌های بلیط انتخاب شده
+  const [seats, setSeats] = useState([]);
+
+  // صندلی انتخاب شده برای رزرو موقت
+  const [selectedSeat, setSelectedSeat] = useState(null);
+  const [tempReservations, setTempReservations] = useState([]);
+
+
+  // وضعیت رزرو و پرداخت
+  const [reservationLoading, setReservationLoading] = useState(false);
+  const [reservationError, setReservationError] = useState(null);
+  const [tempReservationId, setTempReservationId] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState(null);
+  const [paymentError, setPaymentError] = useState(null);
+
+
+  // وضعیت ورود کاربر
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [accessToken, setAccessToken] = useState(null);
+  const [userInfo, setUserInfo] = useState(null);
+
+  // بارگذاری وضعیت کاربر از localStorage هنگام بارگذاری اولیه کامپوننت
   useEffect(() => {
     const token = localStorage.getItem('accessToken');
-    setIsLoggedIn(!!token);
+    const user = JSON.parse(localStorage.getItem('userInfo'));
+    if (token && user) {
+      setIsLoggedIn(true);
+      setAccessToken(token);
+      setUserInfo(user);
+    } else {
+      setIsLoggedIn(false);
+      setAccessToken(null);
+      setUserInfo(null);
+    }
   }, []);
 
-  // بارگذاری بلیط‌های فروخته نشده
+  // ⭐️⭐️⭐️ تغییرات اینجا اعمال شده است ⭐️⭐️⭐️
+  // بارگذاری رزروهای موقت کاربر پس از تغییر وضعیت userInfo
   useEffect(() => {
-    const fetchAvailableTickets = async () => {
-      try {
-        const res = await fetch('http://localhost:8000/api-test/available-tickets/');
-        const data = await res.json();
-        if (res.ok && data.status === 'success') {
-          setAvailableTickets(data.data);
-        } else {
-          console.error('Error fetching tickets:', data.message);
+    if (userInfo) {
+      const storedReservations = JSON.parse(localStorage.getItem('tempReservations') || '[]');
+      const userTempReservations = storedReservations.filter(res => res.username === userInfo.username);
+      setTempReservations(userTempReservations);
+    } else {
+      // این بخش حذف شده تا پس از خروج، رزروها پاک نشوند.
+      // setTempReservations([]);
+    }
+  }, [userInfo]);
+
+  // بررسی رزروهای موقت منقضی شده هر دقیقه
+  useEffect(() => {
+    const checkExpiry = () => {
+      const storedReservations = JSON.parse(localStorage.getItem('tempReservations') || '[]');
+      const now = Date.now();
+      const nonExpiredReservations = storedReservations.filter(res => {
+        const expiryTime = new Date(res.reserved_at).getTime() + (res.expires_in_minutes * 60 * 1000);
+        return expiryTime > now;
+      });
+
+      if (nonExpiredReservations.length !== storedReservations.length) {
+        localStorage.setItem('tempReservations', JSON.stringify(nonExpiredReservations));
+        if (userInfo) {
+            setTempReservations(nonExpiredReservations.filter(res => res.username === userInfo.username));
         }
-      } catch (error) {
-        console.error('Network error:', error);
       }
     };
+    checkExpiry();
+    const interval = setInterval(checkExpiry, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [userInfo]);
+
+
+  // تابع برای دریافت لیست بلیط‌های موجود
+  const fetchAvailableTickets = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api-test/available-tickets/');
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        setAvailableTickets(data.data);
+      } else {
+        console.error('Error fetching tickets:', data.message);
+      }
+    } catch (error) {
+      console.error('Network error:', error);
+    }
+  };
+
+  // بارگذاری اولیه بلیط‌ها
+  useEffect(() => {
     fetchAvailableTickets();
   }, []);
 
@@ -104,11 +172,18 @@ const Home = () => {
   const fetchTicketDetails = async (ticket_id) => {
     setDetailsLoading(true);
     setDetailsError(null);
+    setSelectedSeat(null);
+    setPaymentMethod('');
+    setPaymentMessage(null);
+    setPaymentError(null);
+    setTempReservationId('');
+
     try {
       const res = await fetch(`http://localhost:8000/api-test/ticket-details/${ticket_id}/`);
       const data = await res.json();
       if (res.ok && data.status === 'success') {
         setSelectedTicket(data.data);
+        setSeats(data.data.reservations.sort((a, b) => a.reservation_seat - b.reservation_seat));
       } else {
         setDetailsError(data.message || 'خطا در دریافت جزییات بلیط');
       }
@@ -116,6 +191,126 @@ const Home = () => {
       setDetailsError('خطا در ارتباط با سرور');
     } finally {
       setDetailsLoading(false);
+    }
+  };
+
+  // رزرو موقت صندلی
+  const handleSeatSelection = async (seat_number) => {
+    if (!isLoggedIn) {
+      alert('برای رزرو بلیط ابتدا باید وارد شوید.');
+      return;
+    }
+    setReservationLoading(true);
+    setReservationError(null);
+    setPaymentMessage(null);
+    setTempReservationId('');
+
+    const requestBody = {
+      ticket_id: selectedTicket.ticket_id,
+      seat_number: seat_number,
+    };
+
+    try {
+      const response = await fetch('http://localhost:8000/api-test/reserve-ticket/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const data = await response.json();
+      if (response.ok && data.status === 'success') {
+        // Update the seats state to reflect the new reservation status
+        setSeats(prevSeats =>
+          prevSeats.map(seat =>
+            seat.reservation_seat === seat_number
+              ? { ...seat, reservation_status: 'TEMPORARY', reservation_id: data.reservation.reservation_id, username: userInfo.username }
+              : seat
+          )
+        );
+        // Update the selectedTicket to show the new temporary reservation
+        setSelectedTicket(prevTicket => {
+          if (!prevTicket) return null;
+          const updatedReservations = prevTicket.reservations.map(res =>
+            res.reservation_seat === seat_number
+              ? { ...res, reservation_status: 'TEMPORARY', reservation_id: data.reservation.reservation_id, username: userInfo.username }
+              : res
+          );
+          return { ...prevTicket, reservations: updatedReservations };
+        });
+
+        // Add the new temporary reservation to localStorage
+        const storedReservations = JSON.parse(localStorage.getItem('tempReservations') || '[]');
+        const updatedStoredReservations = [...storedReservations, data.reservation];
+        localStorage.setItem('tempReservations', JSON.stringify(updatedStoredReservations));
+
+        // Add the new temporary reservation to the list for payment in local state
+        setTempReservations(prevTempReservations => [...prevTempReservations, data.reservation]);
+        setPaymentMessage(`صندلی شماره ${seat_number} به صورت موقت رزرو شد. لطفا برای پرداخت از لیست رزروهای موقت آن را انتخاب کنید.`);
+        setSelectedSeat(null); // Reset selected seat for new reservation
+      } else {
+        setReservationError(data.message || 'خطا در رزرو موقت صندلی');
+      }
+    } catch (err) {
+      setReservationError('ارتباط با سرور برقرار نشد.');
+    } finally {
+      setReservationLoading(false);
+    }
+  };
+
+  // پرداخت بلیط
+  const handlePayment = async (e) => {
+    e.preventDefault();
+    if (!paymentMethod) {
+      setPaymentError('لطفا روش پرداخت را انتخاب کنید.');
+      return;
+    }
+    if (!tempReservationId) {
+        setPaymentError('لطفا یک رزرو موقت برای پرداخت انتخاب کنید.');
+        return;
+    }
+
+    setPaymentLoading(true);
+    setPaymentError(null);
+    setPaymentMessage(null);
+
+    const requestBody = {
+      reservation_id: parseInt(tempReservationId),
+      payment_method: paymentMethod,
+      payment_status: paymentMethod === 'WALLET' ? undefined : 'SUCCESSFUL',
+    };
+
+    try {
+      const response = await fetch('http://localhost:8000/api-test/pay-ticket/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const data = await response.json();
+      if (response.ok && data.status === 'success') {
+        setPaymentMessage('پرداخت با موفقیت انجام شد. بلیط شما رزرو نهایی شد!');
+        setSelectedTicket(null);
+        fetchAvailableTickets();
+
+        // Remove the paid reservation from localStorage
+        const storedReservations = JSON.parse(localStorage.getItem('tempReservations') || '[]');
+        const updatedStoredReservations = storedReservations.filter(res => res.reservation_id !== parseInt(tempReservationId));
+        localStorage.setItem('tempReservations', JSON.stringify(updatedStoredReservations));
+
+        setTempReservations(updatedStoredReservations.filter(res => res.username === userInfo.username));
+        setTempReservationId('');
+      } else {
+        setPaymentError(data.message || 'خطا در پرداخت');
+        setPaymentMessage(null);
+      }
+    } catch (err) {
+      setPaymentError('ارتباط با سرور برقرار نشد.');
+    } finally {
+      setPaymentLoading(false);
     }
   };
 
@@ -142,6 +337,10 @@ const Home = () => {
                   localStorage.removeItem('accessToken');
                   localStorage.removeItem('refreshToken');
                   localStorage.removeItem('userInfo');
+                  // ⭐️⭐️⭐️ این خط که باعث پاک شدن رزروها می‌شد، حذف شد.
+                  // localStorage.removeItem('tempReservations');
+                  // ⭐️⭐️⭐️ برای حل مشکل، این خط را اضافه کنید تا وضعیت محلی نیز خالی شود.
+                  setTempReservations([]);
                   setIsLoggedIn(false);
                   window.location.reload();
                 }}
@@ -342,15 +541,13 @@ const Home = () => {
               </div>
               <div className="ticket-body">
                 <div className="ticket-route">
-                  <div className="ticket-city">{ticket.origin_city}</div>
-                  <span className="route-icon">➡️</span>
                   <div className="ticket-city">{ticket.destination_city}</div>
+                  <span className="route-icon">➡️</span>
+                  <div className="ticket-city">{ticket.origin_city}</div>
                 </div>
-                <div className="ticket-info">
-                  <div className="info-item">
-                    <span>تاریخ حرکت:</span>
-                    <strong>{ticket.departure_start?.slice(0, 10)}</strong>
-                  </div>
+                <div className="info-item">
+                  <span>تاریخ حرکت:</span>
+                  <strong>{ticket.departure_start?.slice(0, 10)}</strong>
                 </div>
               </div>
             </div>
@@ -466,10 +663,11 @@ const Home = () => {
                   </div>
                 </>
               )}
-
               <h3>رزروها</h3>
               <ul className="reservation-list">
-                {selectedTicket.reservations.map(res => (
+                {selectedTicket.reservations
+                  .sort((a, b) => a.reservation_id - b.reservation_id)
+                  .map(res => (
                   <li key={res.reservation_id}>
                     <strong>شماره رزرو:</strong> {res.reservation_id}
                     <span>-</span>
@@ -479,11 +677,80 @@ const Home = () => {
                   </li>
                 ))}
               </ul>
+
+              {/* نمایش صندلی‌ها برای انتخاب */}
+              <h3>انتخاب صندلی</h3>
+              <div className="seats-container">
+                {seats.map(seat => (
+                  <button
+                    key={seat.reservation_id}
+                    className={`seat-btn ${seat.reservation_status !== 'NOT_RESERVED' ? 'reserved' : ''} ${selectedSeat === seat.reservation_seat ? 'selected' : ''}`}
+                    disabled={seat.reservation_status !== 'NOT_RESERVED' || reservationLoading}
+                    onClick={() => handleSeatSelection(seat.reservation_seat)}
+                  >
+                    {seat.reservation_seat}
+                  </button>
+                ))}
+              </div>
+
+              {/* پیام رزرو */}
+              {reservationLoading && <p>در حال رزرو صندلی...</p>}
+              {reservationError && <p className="error-message">خطا در رزرو: {reservationError}</p>}
+              {paymentMessage && <p className="success-message">{paymentMessage}</p>}
             </>
           )}
         </section>
       )}
 
+      {/* بخش پرداخت به خارج از شرط selectedTicket منتقل شد */}
+      <section className="payment-section-container">
+        {isLoggedIn && tempReservations.length > 0 && (
+          <div className="payment-section">
+            <form onSubmit={handlePayment} className="payment-form">
+              <h3>پرداخت رزروهای موقت من</h3>
+              <p>شما **{tempReservations.length}** رزرو موقت دارید. لطفا یکی را برای پرداخت انتخاب کنید.</p>
+              <div className="input-group">
+                <label htmlFor="temp-reservation-select">انتخاب رزرو</label>
+                <select
+                  id="temp-reservation-select"
+                  value={tempReservationId}
+                  onChange={e => setTempReservationId(e.target.value)}
+                  required
+                  disabled={paymentLoading}
+                >
+                  <option value="">انتخاب کنید</option>
+                  {tempReservations.map(res => (
+                    <option key={res.reservation_id} value={res.reservation_id}>
+                      صندلی {res.reservation_seat} (رزرو موقت: {res.reservation_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="input-group">
+                <label>روش پرداخت</label>
+                <select
+                  value={paymentMethod}
+                  onChange={e => setPaymentMethod(e.target.value)}
+                  required
+                  disabled={paymentLoading}
+                >
+                  <option value="">انتخاب کنید</option>
+                  <option value="WALLET">کیف پول</option>
+                  <option value="CREDIT_CARD">کارت اعتباری</option>
+                  <option value="CRYPTOCURRENCY">ارز دیجیتال</option>
+                </select>
+              </div>
+
+              <button type="submit" className="pay-btn" disabled={paymentLoading || !tempReservationId || !paymentMethod}>
+                {paymentLoading ? 'در حال پرداخت...' : 'پرداخت نهایی'}
+              </button>
+              {paymentError && <p className="error-message">{paymentError}</p>}
+              {paymentMessage && <p className="success-message">{paymentMessage}</p>}
+            </form>
+          </div>
+        )}
+      </section>
 
 
       <footer className="main-footer">
@@ -492,7 +759,7 @@ const Home = () => {
           <a href="/contact">تماس با ما</a>
           <a href="/terms">قوانین و مقررات</a>
         </div>
-                <div className="footer-info">
+        <div className="footer-info">
           <span>نماد اعتماد الکترونیک</span>
           <span>آیکون‌های شبکه‌های اجتماعی</span>
         </div>
