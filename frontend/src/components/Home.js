@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Button } from '@mui/material';
+import axios from 'axios';
 import './Home.css';
 
 const Home = () => {
@@ -18,6 +20,8 @@ const Home = () => {
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState(null);
+  const [ticketReservations, setTicketReservations] = useState([]);
+  const [error, setError] = useState(null);
 
   // بلیط‌های فروخته نشده
   const [availableTickets, setAvailableTickets] = useState([]);
@@ -169,31 +173,42 @@ const Home = () => {
   };
 
   // گرفتن جزییات بلیط فروخته نشده روی کلیک
-  const fetchTicketDetails = async (ticket_id) => {
-    setDetailsLoading(true);
-    setDetailsError(null);
-    setSelectedSeat(null);
-    setPaymentMethod('');
-    setPaymentMessage(null);
-    setPaymentError(null);
-    setTempReservationId('');
-
+const fetchTicketDetails = async (ticketId) => {
     try {
-      const res = await fetch(`http://localhost:8000/api-test/ticket-details/${ticket_id}/`);
-      const data = await res.json();
-      if (res.ok && data.status === 'success') {
-        setSelectedTicket(data.data);
-        setSeats(data.data.reservations.sort((a, b) => a.reservation_seat - b.reservation_seat));
-      } else {
-        setDetailsError(data.message || 'خطا در دریافت جزییات بلیط');
-      }
-    } catch (error) {
-      setDetailsError('خطا در ارتباط با سرور');
-    } finally {
-      setDetailsLoading(false);
+        const response = await axios.get(`http://localhost:8000/api-test/ticket-details/${ticketId}/`);
+        const details = response.data.data;
+        setSelectedTicket(details);
+        setTicketReservations(details.reservations);
+        setError(null);
+    } catch (err) {
+        console.error("Error fetching ticket details:", err);
+        setError("خطا در دریافت جزئیات بلیط.");
     }
   };
 
+const handleReserveSeat = async (seatNumber) => {
+    // فرض می کنیم accessToken اینجا در دسترس است
+    const token = accessToken;
+
+    try {
+        const response = await axios.post(
+            `http://localhost:8000/api-test/reserve-ticket/`,
+            { ticket_id: selectedTicket.ticket_id, seat_number: seatNumber },
+            {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            }
+        );
+        console.log("Reservation successful:", response.data);
+        alert("صندلی با موفقیت رزرو شد!");
+        fetchTicketDetails(selectedTicket.ticket_id);
+    } catch (err) {
+        console.error("Error reserving seat:", err.response?.data || err);
+        alert(err.response?.data?.message || "خطا در رزرو صندلی.");
+        setError(err.response?.data?.message || "خطا در رزرو صندلی.");
+    }
+  };
   // رزرو موقت صندلی
   const handleSeatSelection = async (seat_number) => {
     if (!isLoggedIn) {
@@ -319,7 +334,7 @@ const Home = () => {
 
       <header className="main-header">
         <div className="logo">
-          <img src="https://images.unsplash.com/photo-1542454655-cfb29b67484b?q=80&w=2070" alt="Logo" />
+          <img src="/logo512.png" alt="Logo" />
         </div>
 
         <div className="header-actions">
@@ -472,6 +487,8 @@ const Home = () => {
                   onChange={e => setTrainStars(e.target.value)}
                 >
                   <option value="">انتخاب کنید</option>
+                  <option value="1">1 ستاره</option>
+                  <option value="2">2 ستاره</option>
                   <option value="3">3 ستاره</option>
                   <option value="4">4 ستاره</option>
                   <option value="5">5 ستاره</option>
@@ -507,7 +524,7 @@ const Home = () => {
                 <h2>نتایج جستجو</h2>
                 <div className="results-list">
                   {searchResults.map(ticket => (
-                    <div key={ticket.ticket_id} className="ticket-card">
+                    <div key={ticket.ticket_id} className="ticket-card" onClick={() => fetchTicketDetails(ticket.ticket_id)}>
                       <h3>{ticket.origin_city} به {ticket.destination_city}</h3>
                       <p>شرکت: {ticket.company_name || ticket.airline_name || '-'}</p>
                       <p>تاریخ حرکت: {ticket.departure_start?.slice(0, 10) || ticket.departure_date || '-'}</p>
@@ -680,18 +697,29 @@ const Home = () => {
 
               {/* نمایش صندلی‌ها برای انتخاب */}
               <h3>انتخاب صندلی</h3>
-              <div className="seats-container">
-                {seats.map(seat => (
-                  <button
-                    key={seat.reservation_id}
-                    className={`seat-btn ${seat.reservation_status !== 'NOT_RESERVED' ? 'reserved' : ''} ${selectedSeat === seat.reservation_seat ? 'selected' : ''}`}
-                    disabled={seat.reservation_status !== 'NOT_RESERVED' || reservationLoading}
-                    onClick={() => handleSeatSelection(seat.reservation_seat)}
-                  >
-                    {seat.reservation_seat}
-                  </button>
-                ))}
-              </div>
+                {selectedTicket && (
+                    <div className="seat-selection-section">
+                        <h3>انتخاب صندلی برای بلیط از {selectedTicket.origin_city} به {selectedTicket.destination_city}</h3>
+                        <div className="seat-buttons">
+                            {ticketReservations.map((reservation) => (
+                                <Button
+                                    key={reservation.reservation_seat}
+                                    variant="contained"
+                                    disabled={reservation.reservation_status !== "NOT_RESERVED"}
+                                    onClick={() => handleReserveSeat(reservation.reservation_seat)}
+                                    sx={{
+                                          margin: '3px',
+                                          padding: '6px 12px',
+                                          fontSize: '0.8rem' }}
+                                >
+                                    صندلی {reservation.reservation_seat}
+                                </Button>
+                            ))}
+                        </div>
+                        <Button onClick={() => setSelectedTicket(null)}>بستن</Button>
+                    </div>
+                )}
+
 
               {/* پیام رزرو */}
               {reservationLoading && <p>در حال رزرو صندلی...</p>}

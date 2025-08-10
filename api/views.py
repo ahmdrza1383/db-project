@@ -969,7 +969,7 @@ def search_tickets_view(request):
                             status=400)
 
     if data.get("vehicle_type"):
-        search_query["query"]["bool"]["filter"].append({"term": {"vehicle_type": data["vehicle_type"].upper()}})
+        search_query["query"]["bool"]["filter"].append({"match": {"vehicle_type": data["vehicle_type"].upper()}})
 
     price_range_query = {}
     if data.get("min_price"):

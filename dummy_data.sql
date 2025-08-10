@@ -1064,3 +1064,56 @@ SELECT
     NULL,
     NULL,
     generate_series(1, 20);
+
+INSERT INTO tickets (
+    ticket_id,
+    vehicle_id,
+    origin_location_id,
+    destination_location_id,
+    departure_start,
+    departure_end,
+    is_round_trip,
+    price,
+    total_capacity,
+    remaining_capacity,
+    ticket_status
+) VALUES (
+    23,
+    75,
+    1,
+    5,
+    '2025-10-10 04:00:00',
+    '2025-10-10 09:00:00',
+    FALSE,
+    250000,
+    20,
+    20,
+    TRUE
+);
+
+
+INSERT INTO reservations (
+    ticket_id,
+    reservation_status,
+    reservation_seat
+) VALUES
+    (23, 'NOT_RESERVED', 1),
+    (23, 'NOT_RESERVED', 2),
+    (23, 'NOT_RESERVED', 3),
+    (23, 'NOT_RESERVED', 4),
+    (23, 'NOT_RESERVED', 5),
+    (23, 'NOT_RESERVED', 6),
+    (23, 'NOT_RESERVED', 7),
+    (23, 'NOT_RESERVED', 8),
+    (23, 'NOT_RESERVED', 9),
+    (23, 'NOT_RESERVED', 10),
+    (23, 'NOT_RESERVED', 11),
+    (23, 'NOT_RESERVED', 12),
+    (23, 'NOT_RESERVED', 13),
+    (23, 'NOT_RESERVED', 14),
+    (23, 'NOT_RESERVED', 15),
+    (23, 'NOT_RESERVED', 16),
+    (23, 'NOT_RESERVED', 17),
+    (23, 'NOT_RESERVED', 18),
+    (23, 'NOT_RESERVED', 19),
+    (23, 'NOT_RESERVED', 20);
