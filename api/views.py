@@ -3167,3 +3167,33 @@ def get_user_temp_reservations_sql(request):
 
     return JsonResponse({'status': 'success', 'data': reservations})
 
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def get_report_status_view(request, reservation_id):
+    try:
+        current_username = request.user_payload.get('sub')
+
+        with connection.cursor() as cursor:
+            # متن گزارش (report_text) را به کوئری اضافه می کنیم
+            query = """
+                SELECT report_status, admin_response, report_text
+                FROM reports
+                WHERE reservation_id = %s;
+            """
+            cursor.execute(query, [reservation_id])
+            report_data = cursor.fetchone()
+
+            # ... بقیه کد
+            if not report_data:
+                return JsonResponse({'status': 'info', 'message': 'No report found for this reservation.'}, status=200)
+
+            columns = [col[0] for col in cursor.description]
+            report_info = dict(zip(columns, report_data))
+
+            return JsonResponse({'status': 'success', 'report': report_info}, status=200)
+
+    except Exception as e:
+        print(f"Error in get_report_status_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)

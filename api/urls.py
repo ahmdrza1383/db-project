@@ -28,4 +28,5 @@ urlpatterns = [
     path('admin/reports/', views.admin_get_reports_view, name='admin-get-reports'),
     path('user-profile/', views.get_user_profile_view, name='user-profile'),
     path('temporary-reservations/', get_user_temp_reservations_sql, name='temporary-reservations'),
+    path('report/status/<int:reservation_id>/', views.get_report_status_view, name='get-report-status'),
 ]
