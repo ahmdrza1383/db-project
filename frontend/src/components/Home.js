@@ -345,6 +345,8 @@ const handleReserveSeat = async (seatNumber) => {
             </>
           ) : (
             <>
+              <a href="/cart" className="btn-auth">سبد خرید</a>
+              <a href="/history" className="btn-auth">تاریخچه رزروها</a>
               <a href="/profile" className="btn-auth">پروفایل</a>
               <button
                 className="btn-auth"
@@ -352,9 +354,6 @@ const handleReserveSeat = async (seatNumber) => {
                   localStorage.removeItem('accessToken');
                   localStorage.removeItem('refreshToken');
                   localStorage.removeItem('userInfo');
-                  // ⭐️⭐️⭐️ این خط که باعث پاک شدن رزروها می‌شد، حذف شد.
-                  // localStorage.removeItem('tempReservations');
-                  // ⭐️⭐️⭐️ برای حل مشکل، این خط را اضافه کنید تا وضعیت محلی نیز خالی شود.
                   setTempReservations([]);
                   setIsLoggedIn(false);
                   window.location.reload();

@@ -2580,6 +2580,8 @@ def get_user_bookings_view(request):
         SELECT
             rh.reservation_history_id AS history_id,
             rh.reservation_id,
+            rh.username,
+            res.username AS current_owner,
             rh.operation_type,
             rh.buy_status AS operation_status,
             rh.date_and_time AS operation_time,
