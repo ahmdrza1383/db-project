@@ -1819,12 +1819,17 @@ def pay_ticket_view(request):
                         new_wallet_balance = current_wallet_balance - actual_ticket_price_for_transaction
                         cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
                                        [new_wallet_balance, current_username])
+                        if redis_client:
+                            try:
+                                invalidate_user_profile_cache(current_username)
+                                get_user_profile(current_username)
+                                print(
+                                    f"User profile cache forcefully updated for '{current_username}' after successful wallet payment.")
+                            except redis.exceptions.RedisError as re_cache_err:
+                                print(f"Redis error during cache update after payment: {re_cache_err}")
                     else:
                         payment_successful_outcome = False
                         new_wallet_balance = current_wallet_balance
-                        return JsonResponse(
-                            {'status': 'error', 'message': 'Payment failed: Insufficient wallet balance.',
-                             'new_wallet_balance': int(new_wallet_balance)}, status=400)
                 else:
                     if user_provided_payment_status is None:
                         return JsonResponse(
@@ -1838,9 +1843,6 @@ def pay_ticket_view(request):
                              'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
                             status=400)
                     payment_successful_outcome = (user_provided_payment_status_upper == 'SUCCESSFUL')
-                    if not payment_successful_outcome:
-                        return JsonResponse({'status': 'error', 'message': 'Payment failed based on provided status.'},
-                                            status=400)
 
                 payment_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
 
@@ -2596,6 +2598,7 @@ def get_user_bookings_view(request):
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
 
+
 @csrf_exempt
 @require_http_methods(["POST"])
 @token_required
@@ -2676,36 +2679,15 @@ def report_ticket_issue_view(request):
 
         report_type_upper = report_type.upper()
 
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT reservation_id, username, reservation_status
-                    FROM reservations
-                    WHERE reservation_id = %s AND username = %s FOR UPDATE;
-                    """,
-                    [reservation_id, current_username]
-                )
-                reservation_info = cursor.fetchone()
-
-                if not reservation_info:
-                    return JsonResponse(
-                        {'status': 'error', 'message': 'Reservation not found or does not belong to you.'}, status=404)
-
-                res_id, res_username, res_status = reservation_info
-
-                if res_status not in ['RESERVED', 'TEMPORARY', 'CANCELED']:
-                    return JsonResponse(
-                        {'status': 'error', 'message': f'Cannot report for reservation in status: {res_status}.'},
-                        status=409)
-
-                insert_query = """
-                    INSERT INTO reports (username, reservation_id, report_type, report_text)
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING report_id, report_status;
-                """
-                cursor.execute(insert_query, [current_username, reservation_id, report_type_upper, report_text])
-                new_report_id, new_report_status = cursor.fetchone()
+        with connection.cursor() as cursor:
+            # اینجا دیگر نیازی به چک کردن وجود گزارش قبلی نیست
+            insert_query = """
+                INSERT INTO reports (username, reservation_id, report_type, report_text)
+                VALUES (%s, %s, %s, %s)
+                RETURNING report_id, report_status;
+            """
+            cursor.execute(insert_query, [current_username, reservation_id, report_type_upper, report_text])
+            new_report_id, new_report_status = cursor.fetchone()
 
         return JsonResponse({
             'status': 'success',
@@ -2720,19 +2702,8 @@ def report_ticket_issue_view(request):
             }
         }, status=201)
 
-    except json.JSONDecodeError:
-        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
-    except IntegrityError as e:
-        print(f"IntegrityError in report_ticket_issue_view: {e}")
-        return JsonResponse({'status': 'error',
-                             'message': 'A data integrity error occurred. This report might already exist or reservation is invalid.'},
-                            status=409)
-    except DatabaseError as e:
-        print(f"DatabaseError in report_ticket_issue_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred while submitting your report.'},
-                            status=500)
     except Exception as e:
-        print(f"Unexpected error in report_ticket_issue_view: {e.__class__.__name__}: {e}")
+        print(f"Unexpected error in report_ticket_issue_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
                             status=500)
 
@@ -3052,6 +3023,7 @@ def admin_get_reports_view(request):
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
+
 @csrf_exempt
 @require_http_methods(["GET"])
 @token_required
@@ -3060,23 +3032,22 @@ def get_report_status_view(request, reservation_id):
         current_username = request.user_payload.get('sub')
 
         with connection.cursor() as cursor:
-            # متن گزارش (report_text) را به کوئری اضافه می کنیم
+            # کوئری را برای گرفتن تمام گزارش‌ها برای یک رزرو تغییر می‌دهیم
             query = """
-                SELECT report_status, admin_response, report_text
+                SELECT report_id, report_status, admin_response, report_text
                 FROM reports
-                WHERE reservation_id = %s;
+                WHERE reservation_id = %s AND username = %s;
             """
-            cursor.execute(query, [reservation_id])
-            report_data = cursor.fetchone()
+            cursor.execute(query, [reservation_id, current_username])
+            report_data = cursor.fetchall()
 
-            # ... بقیه کد
             if not report_data:
                 return JsonResponse({'status': 'info', 'message': 'No report found for this reservation.'}, status=200)
 
             columns = [col[0] for col in cursor.description]
-            report_info = dict(zip(columns, report_data))
+            reports_list = [dict(zip(columns, row)) for row in report_data]
 
-            return JsonResponse({'status': 'success', 'report': report_info}, status=200)
+            return JsonResponse({'status': 'success', 'reports': reports_list}, status=200)
 
     except Exception as e:
         print(f"Error in get_report_status_view: {e}")

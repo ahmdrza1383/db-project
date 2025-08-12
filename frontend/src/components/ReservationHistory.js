@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Container, Typography, MenuItem, Select, FormControl, InputLabel, TextField, Button } from '@mui/material';
+import { Container, Typography, MenuItem, Select, FormControl, InputLabel, TextField, Button, Modal, Box } from '@mui/material';
 import { Link } from 'react-router-dom';
 import './ReservationHistory.css';
 
@@ -15,18 +15,18 @@ const ReservationHistory = () => {
     // state ها برای پاپ‌آپ دیدن جواب
     const [isPopupOpen, setIsPopupOpen] = useState(false);
     const [popupTitle, setPopupTitle] = useState('');
-    const [popupReportText, setPopupReportText] = useState('');
-    const [popupAdminResponse, setPopupAdminResponse] = useState('');
+    const [popupReports, setPopupReports] = useState([]);
 
     // state ها برای پاپ‌آپ ثبت گزارش
     const [isReportPopupOpen, setIsReportPopupOpen] = useState(false);
     const [reportReservationId, setReportReservationId] = useState(null);
-    const [reportType, setReportType] = useState('PAYMENT'); // مقدار پیش‌فرض
+    const [reportType, setReportType] = useState('PAYMENT');
     const [reportText, setReportText] = useState('');
 
-    // ... سایر state های شما
-    const [isCancelDetailsPopupOpen, setIsCancelDetailsPopupOpen] = useState(false);
-    const [cancelDetails, setCancelDetails] = useState(null);
+    // state ها برای پاپ‌آپ ثبت درخواست لغو
+    const [isCancelRequestPopupOpen, setIsCancelRequestPopupOpen] = useState(false);
+    const [cancelReason, setCancelReason] = useState('');
+    const [requestReservationId, setRequestReservationId] = useState(null);
 
     // تابع کمکی برای تعیین کلاس CSS بر اساس وضعیت
     const getBoxClass = (operationType, buyStatus) => {
@@ -63,27 +63,10 @@ const ReservationHistory = () => {
     }, [accessToken]);
 
     // توابع مربوط به دکمه ها
-    const handleReport = async (reservationId) => {
-        try {
-            const response = await axios.get(
-                `http://localhost:8000/api-test/report/status/${reservationId}/`,
-                { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-
-            const data = response.data;
-            if (data.status === 'success') {
-                // اگر قبلا گزارشی ثبت شده، اجازه ثبت دوباره نمی‌دهد
-                alert('شما قبلاً برای این رزرو گزارشی ثبت کرده‌اید.');
-                return;
-            }
-
-            // اگر گزارشی ثبت نشده، پاپ‌آپ ثبت گزارش را باز می‌کند
-            setReportReservationId(reservationId);
-            setIsReportPopupOpen(true);
-
-        } catch (err) {
-            alert(err.response?.data?.message || 'خطا در بررسی وضعیت گزارش.');
-        }
+    const handleReport = (reservationId) => {
+        // این تابع دیگر گزارشی را چک نمی کند و مستقیما پاپ آپ را باز می کند
+        setReportReservationId(reservationId);
+        setIsReportPopupOpen(true);
     };
 
     const submitReport = async (e) => {
@@ -121,58 +104,53 @@ const ReservationHistory = () => {
             const data = response.data;
             if (data.status === 'info') {
                 setPopupTitle('وضعیت گزارش');
-                setPopupReportText('هنوز گزارشی برای این رزرو ثبت نشده است.');
-                setPopupAdminResponse('');
+                setPopupReports([]);
             } else if (data.status === 'success') {
-                const report = data.report;
-                setPopupTitle('جزئیات گزارش');
-                setPopupReportText(report.report_text || 'متن گزارش شما در دسترس نیست.');
-
-                if (report.report_status === 'UNCHECKED') {
-                    setPopupAdminResponse('گزارش شما ثبت شده اما هنوز پاسخی دریافت نکرده است.');
-                } else {
-                    setPopupAdminResponse(report.admin_response || 'پاسخی از طرف مدیر ثبت نشده است.');
-                }
+                setPopupTitle('جزئیات گزارش‌ها');
+                setPopupReports(data.reports);
             }
             setIsPopupOpen(true);
-
         } catch (err) {
             alert(err.response?.data?.message || 'خطا در دریافت پاسخ گزارش.');
         }
     };
 
-   const handleRequest = async (reservationId) => {
-      try {
-          // از API موجود برای گرفتن جزئیات لغو استفاده می کنیم
-          const response = await axios.get(
-              `http://localhost:8000/api-test/reservations/${reservationId}/cancel/`,
-              { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
+    const handleRequest = (booking) => {
+        const departureTime = new Date(booking.ticket_details.departure_start);
+        const now = new Date();
 
-          if (response.data.status === 'success') {
-              setCancelDetails({ ...response.data.cancellation_info, reservation_id: reservationId });
-              setIsCancelDetailsPopupOpen(true);
-          } else {
-              alert(response.data.message);
-          }
-      } catch (err) {
-          alert(err.response?.data?.message || "خطا در دریافت جزئیات لغو.");
-      }
-   };
+        if (departureTime <= now) {
+            alert("نمی‌توانید برای بلیتی که تاریخ حرکت آن گذشته است، درخواست لغو ثبت کنید.");
+            return;
+        }
 
-  const confirmCancelRequest = async (cancelReason) => {
-      try {
-          const response = await axios.post(
-              `http://localhost:8000/api-test/reservations/${cancelDetails.reservation_id}/requests/`,
-              { request_subject: 'CANCEL', request_text: cancelReason },
-              { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
-          alert(response.data.message);
-          setIsCancelDetailsPopupOpen(false);
-      } catch (err) {
-          alert(err.response?.data?.message || "خطا در ثبت درخواست لغو.");
-      }
-  };
+        // اگر تاریخ نگذشته بود، پاپ‌آپ را باز می‌کند
+        setRequestReservationId(booking.reservation_id);
+        setIsCancelRequestPopupOpen(true);
+    };
+
+    const submitCancelRequest = async (e) => {
+        e.preventDefault();
+        try {
+            const response = await axios.post(
+                `http://localhost:8000/api-test/reservations/${requestReservationId}/requests/`,
+                {
+                    request_subject: 'CANCEL',
+                    request_text: cancelReason
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                    }
+                }
+            );
+            alert("درخواست لغو شما با موفقیت ثبت شد.");
+            setIsCancelRequestPopupOpen(false);
+            setCancelReason('');
+        } catch (err) {
+            alert(err.response?.data?.message || "خطا در ثبت درخواست.");
+        }
+    };
 
     if (loading) return <Typography>در حال بارگذاری...</Typography>;
     if (error) return <Typography color="error">{error}</Typography>;
@@ -215,57 +193,71 @@ const ReservationHistory = () => {
                             </div>
 
                             <div className="item-actions">
-                                {/* دکمه‌ها برای بلیط‌های خریده شده موفق توسط کاربر فعلی */}
+                                {/* این دکمه‌ها فقط برای خریدهای موفق توسط کاربر فعلی نمایش داده می شوند */}
                                 {isBuy && isOwner && booking.operation_status === 'SUCCESSFUL' && (
                                     <>
-                                        <button className="action-btn" onClick={() => handleViewResponse(booking.reservation_id)}>دیدن جواب</button>
-                                        <button className="action-btn" onClick={() => handleReport(booking.reservation_id)}>ثبت گزارش</button>
-                                        <button className="action-btn" onClick={() => handleRequest(booking.reservation_id)}>ثبت درخواست لغو</button>
+                                        <Button className="action-btn" onClick={() => handleViewResponse(booking.reservation_id)}>دیدن جواب</Button>
+                                        <Button className="action-btn" onClick={() => handleReport(booking.reservation_id)}>ثبت گزارش</Button>
+                                        <Button
+                                            className="action-btn"
+                                            onClick={() => handleRequest(booking)}>
+                                            ثبت درخواست لغو
+                                        </Button>
                                     </>
                                 )}
-
                             </div>
                         </div>
                     );
                 })
             )}
 
-            {/* پاپ‌آپ‌های مشترک در انتهای کامپوننت */}
-            {/* پاپ‌آپ دیدن جواب */}
+            {/* پاپ‌آپ دیدن جواب گزارش‌ها */}
             {isPopupOpen && (
-                <div className="popup-overlay">
-                    <div className="popup-content">
+                <Modal open={isPopupOpen} onClose={() => setIsPopupOpen(false)}>
+                    <Box className="confirm-popup-box">
                         <div className="popup-header">
                             <h2>{popupTitle}</h2>
-                            <button className="popup-close-btn" onClick={() => setIsPopupOpen(false)}>
+                            <Button className="popup-close-btn" onClick={() => setIsPopupOpen(false)}>
                                 &times;
-                            </button>
+                            </Button>
                         </div>
                         <div className="popup-body">
-                            <div className="user-report-text">
-                                <strong>متن گزارش شما:</strong>
-                                <p>{popupReportText}</p>
-                            </div>
-                            {popupAdminResponse && (
-                                <div className="admin-response-text">
-                                    <strong>پاسخ مدیر:</strong>
-                                    <p>{popupAdminResponse}</p>
-                                </div>
+                            {popupReports.length > 0 ? (
+                                popupReports.map((report, index) => (
+                                    <div key={report.report_id} className="report-item">
+                                        <h3>گزارش #{index + 1}</h3>
+                                        <div className="user-report-text">
+                                            <strong>متن گزارش:</strong>
+                                            <p>{report.report_text}</p>
+                                        </div>
+                                        <div className="admin-response-text">
+                                            <strong>پاسخ مدیر:</strong>
+                                            <p>
+                                                {report.report_status === 'UNCHECKED'
+                                                    ? 'هنوز پاسخی دریافت نکرده‌اید.'
+                                                    : report.admin_response || 'پاسخی ثبت نشده است.'
+                                                }
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <p>هنوز گزارشی برای این رزرو ثبت نشده است.</p>
                             )}
                         </div>
-                    </div>
-                </div>
+                    </Box>
+                </Modal>
             )}
 
             {/* پاپ‌آپ ثبت گزارش */}
             {isReportPopupOpen && (
-                <div className="popup-overlay">
-                    <div className="popup-content">
+                <Modal open={isReportPopupOpen} onClose={() => setIsReportPopupOpen(false)}>
+                    <Box className="confirm-popup-box">
                         <div className="popup-header">
                             <h2>ثبت گزارش جدید</h2>
-                            <button className="popup-close-btn" onClick={() => setIsReportPopupOpen(false)}>
+                            <Button className="popup-close-btn" onClick={() => setIsReportPopupOpen(false)}>
                                 &times;
-                            </button>
+                            </Button>
                         </div>
                         <form onSubmit={submitReport} className="report-form">
                             <FormControl fullWidth margin="normal">
@@ -295,44 +287,40 @@ const ReservationHistory = () => {
                                 ارسال گزارش
                             </Button>
                         </form>
-                    </div>
-                </div>
+                    </Box>
+                </Modal>
             )}
-            {/* پاپ‌آپ نمایش جزئیات لغو */}
-            {isCancelDetailsPopupOpen && cancelDetails && (
-                <div className="popup-overlay">
-                    <div className="popup-content">
-                        <div className="popup-header">
-                            <h2>جزئیات لغو رزرو</h2>
-                            <button className="popup-close-btn" onClick={() => setIsCancelDetailsPopupOpen(false)}>
-                                &times;
-                            </button>
-                        </div>
-                        <div className="popup-body">
-                            <p><strong>قیمت بلیت:</strong> {cancelDetails.ticket_price} تومان</p>
-                            <p><strong>نرخ جریمه:</strong> {cancelDetails.penalty_percentage}%</p>
-                            <p><strong>مبلغ جریمه:</strong> {cancelDetails.penalty_amount} تومان</p>
-                            <p><strong>مبلغ قابل برگشت:</strong> {cancelDetails.refund_amount} تومان</p>
-                            <p><strong>زمان باقی‌مانده تا حرکت:</strong> {cancelDetails.time_to_departure_hours} ساعت</p>
 
-                            <form onSubmit={(e) => { e.preventDefault(); confirmCancelRequest(e.target.reason.value); }}>
-                                <TextField
-                                    label="دلیل لغو"
-                                    name="reason"
-                                    multiline
-                                    rows={3}
-                                    fullWidth
-                                    margin="normal"
-                                    required
-                                />
-                                <div className="item-actions">
-                                    <Button type="submit" variant="contained" color="primary">تایید و ارسال درخواست</Button>
-                                    <Button onClick={() => setIsCancelDetailsPopupOpen(false)} variant="outlined" color="secondary">انصراف</Button>
-                                </div>
-                            </form>
+            {/* پاپ‌آپ ثبت درخواست لغو */}
+            {isCancelRequestPopupOpen && (
+                <Modal open={isCancelRequestPopupOpen} onClose={() => setIsCancelRequestPopupOpen(false)}>
+                    <Box className="confirm-popup-box">
+                        <div className="popup-header">
+                            <h2>ثبت درخواست لغو</h2>
+                            <Button className="popup-close-btn" onClick={() => setIsCancelRequestPopupOpen(false)}>
+                                &times;
+                            </Button>
                         </div>
-                    </div>
-                </div>
+                        <form onSubmit={submitCancelRequest} className="report-form">
+                            <Typography variant="body1">
+                                دلیل خود را برای لغو این رزرو بنویسید:
+                            </Typography>
+                            <TextField
+                                label="متن درخواست"
+                                multiline
+                                rows={4}
+                                fullWidth
+                                margin="normal"
+                                value={cancelReason}
+                                onChange={(e) => setCancelReason(e.target.value)}
+                                required
+                            />
+                            <Button type="submit" variant="contained" color="primary" sx={{ mt: 2 }}>
+                                ارسال درخواست
+                            </Button>
+                        </form>
+                    </Box>
+                </Modal>
             )}
         </Container>
     );

@@ -216,7 +216,7 @@ const ShoppingCart = () => {
                     </Typography>
                     <div className="item-actions" style={{ marginTop: '1.5rem' }}>
                         <Button onClick={confirmPayment} variant="contained" color="primary">تایید</Button>
-                        <Button onClick={cancelPayment} variant="outlined" color="secondary">انصراف</Button>
+                        <Button onClick={cancelPayment} variant="outlined" color="primary">انصراف</Button>
                     </div>
                 </Box>
             </Modal>
