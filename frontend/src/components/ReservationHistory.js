@@ -27,6 +27,8 @@ const ReservationHistory = () => {
     const [isCancelRequestPopupOpen, setIsCancelRequestPopupOpen] = useState(false);
     const [cancelReason, setCancelReason] = useState('');
     const [requestReservationId, setRequestReservationId] = useState(null);
+    const [isCancelDetailsPopupOpen, setIsCancelDetailsPopupOpen] = useState(false);
+    const [cancellationDetails, setCancellationDetails] = useState(null);
 
     // تابع کمکی برای تعیین کلاس CSS بر اساس وضعیت
     const getBoxClass = (operationType, buyStatus) => {
@@ -115,7 +117,7 @@ const ReservationHistory = () => {
         }
     };
 
-    const handleRequest = (booking) => {
+    const handleRequest = async (booking) => {
         const departureTime = new Date(booking.ticket_details.departure_start);
         const now = new Date();
 
@@ -124,9 +126,34 @@ const ReservationHistory = () => {
             return;
         }
 
-        // اگر تاریخ نگذشته بود، پاپ‌آپ را باز می‌کند
-        setRequestReservationId(booking.reservation_id);
-        setIsCancelRequestPopupOpen(true);
+        try {
+            // گام ۱: بررسی درخواست‌های قبلی
+            const pendingCheckResponse = await axios.get(
+                `http://localhost:8000/api-test/reservations/pending-request/${booking.reservation_id}/`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+
+            if (pendingCheckResponse.data.has_pending_request) {
+                alert("شما قبلاً یک درخواست لغو برای این رزرو ثبت کرده‌اید که هنوز در حال بررسی است.");
+                return;
+            }
+
+            // گام ۲: اگر درخواست قبلی وجود نداشت، جزئیات جریمه را دریافت کن
+            const detailsResponse = await axios.get(
+                `http://localhost:8000/api-test/reservations/${booking.reservation_id}/cancel/`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+
+            if (detailsResponse.data.status === 'success') {
+                setCancellationDetails(detailsResponse.data.cancellation_info);
+                setRequestReservationId(booking.reservation_id);
+                setIsCancelDetailsPopupOpen(true);
+            } else {
+                alert(detailsResponse.data.message);
+            }
+        } catch (err) {
+            alert(err.response?.data?.message || "خطا در دریافت جزئیات لغو.");
+        }
     };
 
     const submitCancelRequest = async (e) => {
@@ -138,17 +165,13 @@ const ReservationHistory = () => {
                     request_subject: 'CANCEL',
                     request_text: cancelReason
                 },
-                {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                    }
-                }
+                { headers: { Authorization: `Bearer ${accessToken}` } }
             );
-            alert("درخواست لغو شما با موفقیت ثبت شد.");
-            setIsCancelRequestPopupOpen(false);
+            alert(response.data.message);
+            setIsCancelDetailsPopupOpen(false);
             setCancelReason('');
         } catch (err) {
-            alert(err.response?.data?.message || "خطا در ثبت درخواست.");
+            alert(err.response?.data?.message || "خطا در ثبت درخواست لغو.");
         }
     };
 
@@ -291,34 +314,41 @@ const ReservationHistory = () => {
                 </Modal>
             )}
 
-            {/* پاپ‌آپ ثبت درخواست لغو */}
-            {isCancelRequestPopupOpen && (
-                <Modal open={isCancelRequestPopupOpen} onClose={() => setIsCancelRequestPopupOpen(false)}>
+            {/* پاپ‌آپ جزئیات لغو و ثبت درخواست */}
+            {isCancelDetailsPopupOpen && cancellationDetails && (
+                <Modal open={isCancelDetailsPopupOpen} onClose={() => setIsCancelDetailsPopupOpen(false)}>
                     <Box className="confirm-popup-box">
                         <div className="popup-header">
                             <h2>ثبت درخواست لغو</h2>
-                            <Button className="popup-close-btn" onClick={() => setIsCancelRequestPopupOpen(false)}>
+                            <Button className="popup-close-btn" onClick={() => setIsCancelDetailsPopupOpen(false)}>
                                 &times;
                             </Button>
                         </div>
-                        <form onSubmit={submitCancelRequest} className="report-form">
-                            <Typography variant="body1">
-                                دلیل خود را برای لغو این رزرو بنویسید:
-                            </Typography>
-                            <TextField
-                                label="متن درخواست"
-                                multiline
-                                rows={4}
-                                fullWidth
-                                margin="normal"
-                                value={cancelReason}
-                                onChange={(e) => setCancelReason(e.target.value)}
-                                required
-                            />
-                            <Button type="submit" variant="contained" color="primary" sx={{ mt: 2 }}>
-                                ارسال درخواست
-                            </Button>
-                        </form>
+                        <div className="popup-body">
+                            <p><strong>قیمت بلیت:</strong> {cancellationDetails.ticket_price} تومان</p>
+                            <p><strong>نرخ جریمه:</strong> {cancellationDetails.penalty_percentage}%</p>
+                            <p><strong>مبلغ جریمه:</strong> {cancellationDetails.penalty_amount} تومان</p>
+                            <p><strong>مبلغ قابل برگشت:</strong> {cancellationDetails.refund_amount} تومان</p>
+                            <p><strong>زمان باقی‌مانده تا حرکت:</strong> {cancellationDetails.time_to_departure_hours} ساعت</p>
+
+                            <form onSubmit={submitCancelRequest} className="report-form">
+                                <TextField
+                                    label="دلیل لغو"
+                                    name="reason"
+                                    multiline
+                                    rows={4}
+                                    fullWidth
+                                    margin="normal"
+                                    value={cancelReason}
+                                    onChange={(e) => setCancelReason(e.target.value)}
+                                    required
+                                />
+                                <div className="item-actions">
+                                    <Button type="submit" variant="contained" color="primary">تایید و ارسال درخواست</Button>
+                                    <Button onClick={() => setIsCancelDetailsPopupOpen(false)} variant="outlined" color="primary">انصراف</Button>
+                                </div>
+                            </form>
+                        </div>
                     </Box>
                 </Modal>
             )}

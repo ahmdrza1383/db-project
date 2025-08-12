@@ -28,4 +28,6 @@ urlpatterns = [
     path('user-profile/', views.get_user_profile_view, name='user-profile'),
     path('report/status/<int:reservation_id>/', views.get_report_status_view, name='get-report-status'),
     path('temporary-reservations/', views.get_temporary_reservations_view, name='get-temporary-reservations'),
+    path('reservations/pending-request/<int:reservation_id>/', views.check_pending_request_view, name='check-pending-request'),
+
 ]

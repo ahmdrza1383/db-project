@@ -3093,3 +3093,29 @@ def get_temporary_reservations_view(request):
     except Exception as e:
         print(f"Unexpected error in get_temporary_reservations_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def check_pending_request_view(request, reservation_id):
+    try:
+        current_username = request.user_payload.get('sub')
+
+        with connection.cursor() as cursor:
+            query = """
+                SELECT COUNT(*)
+                FROM requests
+                WHERE reservation_id = %s
+                  AND username = %s
+                  AND is_checked = FALSE;
+            """
+            cursor.execute(query, [reservation_id, current_username])
+            count = cursor.fetchone()[0]
+
+            has_pending_request = count > 0
+
+            return JsonResponse({'status': 'success', 'has_pending_request': has_pending_request}, status=200)
+
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
