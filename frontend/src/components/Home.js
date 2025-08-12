@@ -335,6 +335,11 @@ const handleReserveSeat = async (seatNumber) => {
       <header className="main-header">
         <div className="logo">
           <img src="/logo512.png" alt="Logo" />
+          {isLoggedIn && userInfo && (
+            <span className="user-info">
+                {userInfo.username}
+            </span>
+        )}
         </div>
 
         <div className="header-actions">

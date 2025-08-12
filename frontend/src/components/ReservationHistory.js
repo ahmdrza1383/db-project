@@ -210,20 +210,20 @@ const ReservationHistory = () => {
                                 <p>مبدأ: <strong>{booking.ticket_details.origin_city}</strong></p>
                                 <p>مقصد: <strong>{booking.ticket_details.destination_city}</strong></p>
                                 <p>تاریخ حرکت: <strong>{new Date(booking.ticket_details.departure_start).toLocaleDateString('fa-IR')}</strong></p>
+                                <p>نوع وسیله نقلیه: <strong>{booking.vehicle_type}</strong></p>
                                 <p>تاریخ انجام عملیات: <strong>{new Date(booking.operation_time).toLocaleString('fa-IR')}</strong></p>
                             </div>
 
                             <div className="item-actions">
-                                {isBuy && isOwner && (
+                                {/* دکمه‌ها برای بلیط‌های خریده شده موفق توسط کاربر فعلی */}
+                                {isBuy && isOwner && booking.operation_status === 'SUCCESSFUL' && (
                                     <>
-                                        <Button className="action-btn" onClick={() => handleViewResponse(booking.reservation_id)}>دیدن جواب</Button>
-                                        <Button className="action-btn" onClick={() => handleReport(booking.reservation_id)}>ثبت گزارش</Button>
-                                        <Button className="action-btn" onClick={() => handleRequest(booking.reservation_id)}>ثبت درخواست لغو</Button>
+                                        <button className="action-btn" onClick={() => handleViewResponse(booking.reservation_id)}>دیدن جواب</button>
+                                        <button className="action-btn" onClick={() => handleReport(booking.reservation_id)}>ثبت گزارش</button>
+                                        <button className="action-btn" onClick={() => handleRequest(booking.reservation_id)}>ثبت درخواست لغو</button>
                                     </>
                                 )}
-                                {(!isBuy || (isBuy && !isOwner)) && (
-                                    <Button className="action-btn" onClick={() => handleViewResponse(booking.reservation_id)}>دیدن جواب</Button>
-                                )}
+
                             </div>
                         </div>
                     );

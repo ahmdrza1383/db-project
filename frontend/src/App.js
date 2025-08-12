@@ -6,6 +6,7 @@ import LoginPage from './components/LoginPage';
 import Dashboard from './components/Dashboard';
 import UserProfile from './components/UserProfile';
 import ReservationHistory from './components/ReservationHistory';
+import ShoppingCart from './components/ShoppingCart';
 
 function App() {
   const isAuthenticated = localStorage.getItem('accessToken');
@@ -20,6 +21,7 @@ function App() {
           <Route path="/dashboard" element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" replace />} />
           <Route path="/profile" element={isAuthenticated ? <UserProfile /> : <Navigate to="/login" replace />} />
           <Route path="/history" element={isAuthenticated ? <ReservationHistory /> : <Navigate to="/login" replace />} />
+          <Route path="/cart" element={isAuthenticated ? <ShoppingCart /> : <Navigate to="/login" replace />} />
         </Routes>
       </div>
     </Router>

@@ -1,0 +1,101 @@
+/* src/components/ShoppingCart.css */
+.cart-container {
+    padding: 2rem;
+}
+
+.cart-item {
+    border: 1px solid #007bff;
+    background-color: #f8f9fa;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.cart-item:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.2);
+}
+
+.cart-item-details p {
+    margin: 0.5rem 0;
+}
+
+.cart-item-details p strong {
+    color: #000;
+}
+
+.cart-actions {
+    margin-top: 1rem;
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.payment-result-message {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    font-weight: bold;
+}
+
+.payment-result-message.success {
+    background-color: #e8f5e9;
+    color: #388e3c;
+}
+
+.payment-result-message.error {
+    background-color: #ffebee;
+    color: #d32f2f;
+}
+
+.confirm-popup-box {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #fff;
+    padding: 2rem;
+    border-radius: 8px;
+    width: 400px;
+    max-width: 90%;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    outline: none;
+    text-align: right;
+}
+
+/* برای واکنش‌گرایی */
+@media (max-width: 768px) {
+    .cart-container {
+        padding: 1rem;
+    }
+    .cart-item {
+        padding: 1rem;
+    }
+    .cart-actions {
+        flex-direction: column;
+    }
+}
+
+.home-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 200px;
+    height: 40px;
+    border-radius: 5px;
+    background-color: transparent;
+    border: 1px solid #007bff;
+    color: #007bff;
+    font-size: 1.2rem;
+    text-decoration: none;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.home-btn:hover {
+    background-color: #007bff;
+    color: #fff;
+}

@@ -1688,13 +1688,11 @@ class CreateRequestView(APIView):
 def pay_ticket_view(request):
     """
     Handles payment for a temporarily reserved ticket.
-
     Only regular 'USER' roles are permitted to perform payments. 'ADMIN' roles are forbidden.
-    The system ONLY checks for the temporary reservation in Redis using its reservation_id.
-    If it's not found in Redis, it implies the reservation has expired or was never created,
-    and an error is returned.
+    The system checks for the temporary reservation in Redis. If it's not found,
+    it implies the reservation has expired.
 
-    ***ADDED CHECK: Cannot pay if ticket departure time is in the past (retrieved solely from Redis cache).***
+    ***ADDED CHECK: Cannot pay if ticket departure time is in the past.***
 
     Users can pay using 'WALLET', 'CRYPTOCURRENCY', or 'CREDIT_CARD'.
     - If `payment_method` is 'WALLET', the system automatically determines
@@ -1704,9 +1702,6 @@ def pay_ticket_view(request):
 
     Upon successful payment, the reservation status is confirmed to 'RESERVED',
     a payment record is created, and a 'BUY' entry is added to reservation history.
-    If payment fails (e.g., insufficient wallet balance or user-provided 'UNSUCCESSFUL' status),
-    the temporary reservation status remains 'TEMPORARY', allowing user to retry payment
-    within the expiry window. The Celery task will eventually revert it if payment is not made.
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
@@ -1715,33 +1710,8 @@ def pay_ticket_view(request):
     {
         "reservation_id": 101,
         "payment_method": "WALLET",
-        "payment_status": "SUCCESSFUL"
+        "payment_status": "SUCCESSFUL" // Optional for WALLET, required for others
     }
-
-    Successful Response (JSON - Status Code: 200 OK):
-    {
-        "status": "success",
-        "message": "Payment successful. Reservation confirmed.",
-        "payment_details": { ... },
-        "reservation_history": { ... },
-        "new_wallet_balance": 1500000
-    }
-
-    Error Response (JSON - Status Code: 400 Bad Request):
-    {
-        "status": "error",
-        "message": "Payment failed: Insufficient wallet balance.",
-        "payment_details": { ... },
-        "reservation_history": { ... }
-    }
-
-    Error Responses (JSON - other common errors):
-    - 400 Bad Request: Invalid JSON, missing required fields, invalid payment_method, etc.
-    - 401 Unauthorized: Token missing or invalid.
-    - 403 Forbidden: User role is not 'USER' or reservation does not belong to the user.
-    - 404 Not Found: Temporary reservation not found in Redis for the given reservation_id.
-    - 409 Conflict: Reservation is not in TEMPORARY status (e.g., already paid or reverted by Celery).
-    - 500 Internal Server Error: Database or unexpected server errors.
     """
     current_username = request.user_payload.get('sub')
     user_role = request.user_payload.get('role')
@@ -1785,44 +1755,10 @@ def pay_ticket_view(request):
     payment_details_for_response = {}
     history_details_for_response = {}
     new_wallet_balance = None
-
     actual_ticket_price_for_transaction = None
 
-    if payment_method_upper == 'WALLET':
-        if user_provided_payment_status is not None:
-            return JsonResponse({'status': 'error',
-                                 'message': 'Payment status cannot be provided for WALLET payments. It is determined automatically.'},
-                                status=400)
-    else:
-        if user_provided_payment_status is None:
-            return JsonResponse(
-                {'status': 'error', 'message': f'Payment status is required for {payment_method_upper} payments.'},
-                status=400)
-        user_provided_payment_status_upper = user_provided_payment_status.upper()
-        if user_provided_payment_status_upper not in ['SUCCESSFUL', 'UNSUCCESSFUL']:
-            return JsonResponse(
-                {'status': 'error', 'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
-                status=400)
-
-    try:
-        redis_client_local = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=0,
-            decode_responses=True
-        )
-        redis_client_local.ping()
-    except redis.exceptions.ConnectionError as e:
-        print(f"Could not connect to Redis within pay_ticket_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot process payment.'},
-                            status=503)
-    except AttributeError:
-        print("Redis settings (REDIS_HOST, REDIS_PORT) not found in Django settings within pay_ticket_view.")
-        return JsonResponse({'status': 'error', 'message': 'Redis settings missing. Cannot process payment.'},
-                            status=500)
-
     redis_key = f"temp_reservation:{res_id}"
-    cached_data_json = redis_client_local.get(redis_key)
+    cached_data_json = redis_client.get(redis_key)
 
     if not cached_data_json:
         return JsonResponse({'status': 'error',
@@ -1841,28 +1777,8 @@ def pay_ticket_view(request):
             {'status': 'error', 'message': 'Forbidden: This temporary reservation does not belong to you.'}, status=403)
 
     actual_ticket_price_for_transaction = cached_reservation_data.get('ticket_price')
-    ticket_departure_start_str_from_cache = cached_reservation_data.get(
-        'ticket_departure_start')
-    if actual_ticket_price_for_transaction is None or ticket_departure_start_str_from_cache is None:
-        print(f"Error: Ticket price or departure time not found in Redis cache for reservation {res_id}.")
-        return JsonResponse({'status': 'error',
-                             'message': 'Ticket details missing from temporary reservation data in Redis. Cannot proceed.'},
-                            status=500)
-
-    try:
-        departure_start_time_from_cache = datetime.fromisoformat(ticket_departure_start_str_from_cache)
-        now_utc = datetime.now(timezone.utc)
-
-        if departure_start_time_from_cache.tzinfo is None:
-            departure_start_time_from_cache = departure_start_time_from_cache.replace(tzinfo=timezone.utc)
-
-        if departure_start_time_from_cache <= now_utc:
-            return JsonResponse({'status': 'error',
-                                 'message': 'Cannot pay for a ticket for a trip that has already started or passed. This temporary reservation will expire soon.'},
-                                status=409)
-    except ValueError as ve:
-        print(f"Error parsing departure time from cache for reservation {res_id}: {ve}")
-        return JsonResponse({'status': 'error', 'message': 'Corrupted departure time in temporary reservation data.'},
+    if actual_ticket_price_for_transaction is None:
+        return JsonResponse({'status': 'error', 'message': 'Ticket price missing from temporary reservation data.'},
                             status=500)
 
     try:
@@ -1893,37 +1809,38 @@ def pay_ticket_view(request):
                                          'message': f'Reservation status is {current_res_status_db}. Only TEMPORARY reservations can be paid. It might have expired or been processed.'},
                                         status=409)
 
-                ticket_id_from_redis_cache = cached_reservation_data.get('ticket_id')
-
-                if fetched_ticket_id_db != ticket_id_from_redis_cache:
-                    print(
-                        f"Warning: Ticket ID mismatch between Redis Cache ({ticket_id_from_redis_cache}) and DB ({fetched_ticket_id_db}) for reservation {res_id}. Proceeding with DB's ticket_id for integrity.")
-                    ticket_id_for_db_ops = fetched_ticket_id_db
-                else:
-                    ticket_id_for_db_ops = fetched_ticket_id_db
-
                 if payment_method_upper == 'WALLET':
+                    if user_provided_payment_status is not None:
+                        return JsonResponse({'status': 'error',
+                                             'message': 'Payment status cannot be provided for WALLET payments. It is determined automatically.'},
+                                            status=400)
                     if current_wallet_balance >= actual_ticket_price_for_transaction:
                         payment_successful_outcome = True
                         new_wallet_balance = current_wallet_balance - actual_ticket_price_for_transaction
                         cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
                                        [new_wallet_balance, current_username])
-
-                        if redis_client:
-                            try:
-                                invalidate_user_profile_cache(current_username)
-                                get_user_profile(current_username)
-                                print(
-                                    f"User profile cache forcefully updated for '{current_username}' after successful wallet payment.")
-                            except redis.exceptions.RedisError as re_cache_err:
-                                print(f"Redis error during cache update after payment: {re_cache_err}")
-
                     else:
                         payment_successful_outcome = False
                         new_wallet_balance = current_wallet_balance
-
+                        return JsonResponse(
+                            {'status': 'error', 'message': 'Payment failed: Insufficient wallet balance.',
+                             'new_wallet_balance': int(new_wallet_balance)}, status=400)
                 else:
+                    if user_provided_payment_status is None:
+                        return JsonResponse(
+                            {'status': 'error',
+                             'message': f'Payment status is required for {payment_method_upper} payments.'},
+                            status=400)
+                    user_provided_payment_status_upper = user_provided_payment_status.upper()
+                    if user_provided_payment_status_upper not in ['SUCCESSFUL', 'UNSUCCESSFUL']:
+                        return JsonResponse(
+                            {'status': 'error',
+                             'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
+                            status=400)
                     payment_successful_outcome = (user_provided_payment_status_upper == 'SUCCESSFUL')
+                    if not payment_successful_outcome:
+                        return JsonResponse({'status': 'error', 'message': 'Payment failed based on provided status.'},
+                                            status=400)
 
                 payment_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
 
@@ -1976,14 +1893,9 @@ def pay_ticket_view(request):
 
                 if payment_successful_outcome:
                     redis_key_to_delete = f"temp_reservation:{res_id}"
-                    try:
-                        redis_client_local.delete(redis_key_to_delete)
-                        print(f"Temporary reservation {res_id} deleted from Redis due to successful payment.")
-                    except redis.exceptions.RedisError as re_del_err:
-                        print(f"Redis error during deletion of temp_reservation {res_id}: {re_del_err}")
+                    redis_client.delete(redis_key_to_delete)
 
         response_message = "Payment successful. Reservation confirmed." if payment_successful_outcome else "Payment failed. Please try again or use another payment method."
-        response_status_code = status.HTTP_200_OK if payment_successful_outcome else status.HTTP_400_BAD_REQUEST
 
         response_data = {
             'status': 'success' if payment_successful_outcome else 'error',
@@ -1991,21 +1903,17 @@ def pay_ticket_view(request):
             'payment_details': payment_details_for_response,
             'reservation_history': history_details_for_response
         }
-        if payment_method_upper == 'WALLET':
+        if payment_successful_outcome and payment_method_upper == 'WALLET':
             response_data['new_wallet_balance'] = int(new_wallet_balance)
 
-        return JsonResponse(response_data, status=response_status_code)
+        return JsonResponse(response_data,
+                            status=status.HTTP_200_OK if payment_successful_outcome else status.HTTP_400_BAD_REQUEST)
 
-    except Http404 as e:
-        return JsonResponse({'status': 'error', 'message': str(e)}, status=404)
-    except DatabaseError as e:
-        print(f"DatabaseError in pay_ticket_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred during the payment process.'},
-                            status=500)
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
     except Exception as e:
-        print(f"Unexpected error in pay_ticket_view: {e.__class__.__name__}: {e}")
+        print(f"Unexpected error in pay_ticket_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
-
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -2588,12 +2496,14 @@ def get_user_bookings_view(request):
             res.ticket_id,
             t.departure_start,
             loc_origin.city AS origin_city,
-            loc_dest.city AS destination_city
+            loc_dest.city AS destination_city,
+            v.vehicle_type AS vehicle_type
         FROM reservations_history rh
         JOIN reservations res ON rh.reservation_id = res.reservation_id
         JOIN tickets t ON res.ticket_id = t.ticket_id
         JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
         JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+        JOIN vehicles v ON t.vehicle_id = v.vehicle_id
         WHERE rh.username = %s
     """
     params = [current_username]
@@ -3142,32 +3052,6 @@ def admin_get_reports_view(request):
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
-
-@login_required
-def get_user_temp_reservations_sql(request):
-    user_id = request.user.id
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT reservation_id, ticket_id, reservation_seat, reserved_at, expires_in_minutes
-            FROM reservations
-            WHERE user_id = %s AND reservation_status = 'TEMPORARY'
-        """, [user_id])
-        rows = cursor.fetchall()
-
-    # تبدیل نتیجه به دیکشنری
-    reservations = []
-    for row in rows:
-        reservations.append({
-            'reservation_id': row[0],
-            'ticket_id': row[1],
-            'reservation_seat': row[2],
-            'reserved_at': row[3].isoformat() if row[3] else None,
-            'expires_in_minutes': row[4],
-        })
-
-    return JsonResponse({'status': 'success', 'data': reservations})
-
-
 @csrf_exempt
 @require_http_methods(["GET"])
 @token_required
@@ -3196,4 +3080,45 @@ def get_report_status_view(request, reservation_id):
 
     except Exception as e:
         print(f"Error in get_report_status_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def get_temporary_reservations_view(request):
+    try:
+        current_username = request.user_payload.get('sub')
+        if not current_username:
+            return JsonResponse({'status': 'error', 'message': 'Invalid token: Username not found.'}, status=401)
+
+        with connection.cursor() as cursor:
+            query = """
+                SELECT res.reservation_id, res.reservation_seat, res.date_and_time_of_reservation, t.ticket_id, t.departure_start, t.price,
+                       loc_origin.city AS origin_city,
+                       loc_dest.city AS destination_city
+                FROM reservations res
+                JOIN tickets t ON res.ticket_id = t.ticket_id
+                JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
+                JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+                WHERE res.username = %s AND res.reservation_status = 'TEMPORARY'
+            """
+            cursor.execute(query, [current_username])
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            reservations = []
+            for row in rows:
+                reservation_dict = dict(zip(columns, row))
+                if reservation_dict.get('departure_start'):
+                    reservation_dict['departure_start'] = reservation_dict['departure_start'].isoformat()
+                reservations.append(reservation_dict)
+
+        return JsonResponse({'status': 'success', 'data': reservations}, status=200)
+
+    except DatabaseError as e:
+        print(f"Database error in get_temporary_reservations_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred.'}, status=500)
+    except Exception as e:
+        print(f"Unexpected error in get_temporary_reservations_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)

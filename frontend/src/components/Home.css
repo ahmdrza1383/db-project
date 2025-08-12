@@ -155,18 +155,18 @@ body {
   padding: 12px 25px;
   border-radius: 8px;
   border: none;
-  background-color: #28a745;
+  background-color: #007bff; /* رنگ پس‌زمینه آبی */
   color: #fff;
   font-weight: bold;
   cursor: pointer;
   transition: background-color 0.3s ease, transform 0.2s ease;
   width: 100%;
-  grid-column: span 1; /* این دکمه را در هر ستون قرار می‌دهد */
-  align-self: end; /* مطمئن می‌شویم که در پایین ردیف قرار می‌گیرد */
+  grid-column: span 1;
+  align-self: end;
 }
 
 .search-btn:hover {
-  background-color: #218838;
+  background-color: #0056b3; /* رنگ آبی تیره‌تر هنگام نگه داشتن موس */
   transform: translateY(-2px);
 }
 
@@ -300,6 +300,12 @@ body {
 .available-ticket-card:hover {
   transform: translateY(-8px);
   box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.available-ticket-card .ticket-price strong {
+  font-size: 1.5rem;
+  color: #007bff; /* رنگ قیمت را آبی می‌کند */
+  font-weight: 700;
 }
 
 .ticket-header {
@@ -602,4 +608,16 @@ body {
   .details-body {
     grid-template-columns: 1fr;
   }
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 15px; /* فاصله بین لوگو و نام کاربری */
+}
+
+.user-info {
+    font-weight: bold;
+    font-size: 1.1rem;
+    color: #007bff;
 }
