@@ -81,7 +81,7 @@ const ShoppingCart = () => {
             }, 1000);
             return () => clearInterval(interval);
         }
-    }, [temporaryReservations]);
+    }, [temporaryReservations, fetchTemporaryReservations]);
 
     // تابع برای فرمت قیمت
     const formatPrice = (price) => {

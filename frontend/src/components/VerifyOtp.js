@@ -22,7 +22,11 @@ function VerifyOtp({ identifier }) {
             localStorage.setItem('refreshToken', refresh_token);
             localStorage.setItem('userInfo', JSON.stringify(user_info));
 
-            window.location.href = '/'; // بازگشت به صفحه Home
+            if (user_info && user_info.user_role === 'ADMIN') {
+                window.location.href = '/admin/dashboard';
+            } else {
+                window.location.href = '/';
+            }
 
         } catch (err) {
             const errorMessage = err.response?.data?.message || 'خطا در تایید کد.';

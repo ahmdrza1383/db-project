@@ -789,6 +789,7 @@ def update_user_profile_view(request):
         print(f"Unexpected error in update_user_profile_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
+
 @csrf_exempt
 @require_http_methods(["GET"])
 @token_required
@@ -810,6 +811,7 @@ def get_user_profile_view(request):
     except Exception as e:
         print(f"Error fetching user profile: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -1186,6 +1188,7 @@ def get_ticket_details_view(request, ticket_id):
     except Exception as e:
         print(f"Unexpected error in get_ticket_details_view for ticket_id {ticket_id}: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -1917,6 +1920,7 @@ def pay_ticket_view(request):
         print(f"Unexpected error in pay_ticket_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
+
 @csrf_exempt
 @require_http_methods(["POST"])
 @token_required
@@ -2596,7 +2600,6 @@ def get_user_bookings_view(request):
     except Exception as e:
         print(f"Unexpected error in get_user_bookings_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
-
 
 
 @csrf_exempt
