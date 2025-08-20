@@ -1,157 +1,312 @@
-// src/components/UserProfile.js
-
-import React, { useState, useEffect } from 'react';
-import {
-  Container, Typography, TextField, Button, Box,
-  Alert, CircularProgress, Select, MenuItem, InputLabel,
-  FormControl, Divider
-} from '@mui/material';
-import { Link } from 'react-router-dom';
+import React, {useState, useEffect, useCallback} from 'react';
 import axios from 'axios';
+import {useNavigate} from 'react-router-dom';
+import {
+    Container, Typography, Paper, Box, Grid, TextField, Button,
+    CircularProgress, Alert, Avatar, Tabs, Tab, Select, MenuItem, FormControl, InputLabel, InputAdornment, Divider
+} from '@mui/material';
+import PersonIcon from '@mui/icons-material/Person';
+import EditIcon from '@mui/icons-material/Edit';
+import SaveIcon from '@mui/icons-material/Save';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 
-const UserProfile = () => {
-  const [profile, setProfile] = useState({});
-  const [editableProfile, setEditableProfile] = useState({});
-  const [newPassword, setNewPassword] = useState('');
-  const [addToWallet, setAddToWallet] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [isUpdating, setIsUpdating] = useState(false);
+function UserProfile() {
+    const navigate = useNavigate();
+    // --- State ها ---
+    const [user, setUser] = useState(null);
+    const [editMode, setEditMode] = useState(false);
+    const [formData, setFormData] = useState({});
+    const [walletAmount, setWalletAmount] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [success, setSuccess] = useState(null);
+    const [cities, setCities] = useState([]);
+    const [activeTab, setActiveTab] = useState(0);
 
-  useEffect(() => {
-    fetchProfile();
-  }, []);
+    // --- توابع ---
+    const loadInitialData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const userInfoString = localStorage.getItem('userInfo');
+            if (!userInfoString) throw new Error("اطلاعات کاربری یافت نشد.");
+            const userInfo = JSON.parse(userInfoString);
+            setUser(userInfo);
 
-  const fetchProfile = async () => {
-    const token = localStorage.getItem('accessToken');
-    if (!token) {
-      setError('شما وارد نشده‌اید. لطفا ابتدا وارد شوید.');
-      setLoading(false);
-      return;
-    }
+            setFormData({
+                name: userInfo.name || '',
+                phone_number: userInfo.phone_number || '',
+                city_id: userInfo.city_id || '',
+                date_of_birth: userInfo.date_of_birth || '',
+                new_username: userInfo.username || '',
+                new_email: userInfo.email || '',
+                new_password: '',
+                authentication_method: userInfo.authentication_method || 'EMAIL',
+            });
 
-    try {
-      const response = await axios.get('http://localhost:8000/api-test/user-profile/', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setProfile(response.data.user_info);
-      setEditableProfile({});
-      setLoading(false);
-    } catch {
-      setError('خطا در دریافت اطلاعات پروفایل.');
-      setLoading(false);
-    }
-  };
+            const token = localStorage.getItem('accessToken');
+            const citiesResponse = await axios.get('http://localhost:8000/api-test/cities-list/', {
+                headers: {Authorization: `Bearer ${token}`}
+            });
+            setCities(citiesResponse.data.data);
 
-  const handleEditableChange = (e) => {
-    setEditableProfile({ ...editableProfile, [e.target.name]: e.target.value });
-  };
+        } catch (err) {
+            setError("خطا در بارگذاری اطلاعات. لطفاً دوباره وارد شوید.");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
-  const handleUpdate = async (e) => {
-    e.preventDefault();
-    setIsUpdating(true);
-    setError('');
-    setSuccess('');
+    useEffect(() => {
+        loadInitialData();
+    }, [loadInitialData]);
 
-    const token = localStorage.getItem('accessToken');
-    const updatePayload = {};
+    const handleInputChange = (e) => setFormData({...formData, [e.target.name]: e.target.value});
+    const handleTabChange = (event, newValue) => setActiveTab(newValue);
 
-    if (editableProfile.name) updatePayload.name = editableProfile.name;
-    if (editableProfile.username) updatePayload.new_username = editableProfile.username;
-    if (editableProfile.email) updatePayload.new_email = editableProfile.email;
-    if (editableProfile.phone_number) updatePayload.phone_number = editableProfile.phone_number;
-    if (editableProfile.date_of_birth) updatePayload.date_of_birth = editableProfile.date_of_birth;
-    if (editableProfile.authentication_method) updatePayload.new_authentication_method = editableProfile.authentication_method;
-    if (newPassword) updatePayload.new_password = newPassword;
-    if (addToWallet) updatePayload.add_to_wallet_balance = parseInt(addToWallet);
+    const handleUpdateProfile = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
+        setSuccess(null);
 
-    if (Object.keys(updatePayload).length === 0) {
-      setError('هیچ تغییری برای به‌روزرسانی وجود ندارد.');
-      setIsUpdating(false);
-      return;
-    }
+        const payload = {};
+        // مقادیر نهایی پاک‌سازی‌شده
+        const cleaned = {
+            name: (formData.name ?? '').trim(),
+            phone_number: (formData.phone_number ?? '').trim(),
+            city_id: formData.city_id ?? '',
+            date_of_birth: (formData.date_of_birth ?? '').trim(),
+            new_username: (formData.new_username ?? '').trim(),
+            new_email: (formData.new_email ?? '').trim().toLowerCase(),
+            new_password: (formData.new_password ?? '').trim(),
+            authentication_method: (formData.authentication_method ?? '').trim().toUpperCase(),
+        };
 
-    try {
-      const response = await axios.patch('http://localhost:8000/api-test/user-update-profile/', updatePayload, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+        // فیلدهای معمولی
+        if (cleaned.name && cleaned.name !== (user.name ?? '')) payload.name = cleaned.name;
+        if (cleaned.phone_number && cleaned.phone_number !== (user.phone_number ?? '')) payload.phone_number = cleaned.phone_number;
+        if ((cleaned.city_id || cleaned.city_id === 0) && cleaned.city_id !== (user.city_id ?? '')) payload.city_id = cleaned.city_id;
+        if (cleaned.date_of_birth && cleaned.date_of_birth !== (user.date_of_birth ?? '')) payload.date_of_birth = cleaned.date_of_birth;
 
-      setSuccess(response.data.message);
-      setProfile(response.data.user_info);
-      setEditableProfile({});
-      setNewPassword('');
-      setAddToWallet('');
+        // فیلدهای خاص طبق API
+        if (cleaned.new_username && cleaned.new_username !== (user.username ?? '')) payload.new_username = cleaned.new_username;
+        if (cleaned.new_email && cleaned.new_email !== (user.email ?? '').toLowerCase()) payload.new_email = cleaned.new_email;
+        if (cleaned.new_password) payload.new_password = cleaned.new_password;
+        if (cleaned.authentication_method && cleaned.authentication_method !== (user.authentication_method ?? '').toUpperCase()) {
+            payload.new_authentication_method = cleaned.authentication_method;
+        }
 
-      if (response.data.access_token) {
-        localStorage.setItem('accessToken', response.data.access_token);
-        localStorage.setItem('refreshToken', response.data.refresh_token);
-      }
+        if (Object.keys(payload).length === 0) {
+            setSuccess("هیچ تغییری برای ذخیره وجود ندارد.");
+            setEditMode(false);
+            setLoading(false);
+            return;
+        }
 
-      setIsUpdating(false);
-    } catch (err) {
-      const errorMessage = err.response?.data?.message || 'خطای ناشناخته در به‌روزرسانی پروفایل.';
-      setError(errorMessage);
-      setIsUpdating(false);
-    }
-  };
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await axios.patch(
+                'http://localhost:8000/api-test/user-update-profile/',
+                payload,
+                {headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'}}
+            );
 
-  if (loading) {
+            const updatedUserInfo = response.data.user_info;
+
+            if (response.data.access_token) {
+                localStorage.setItem('accessToken', response.data.access_token);
+                localStorage.setItem('refreshToken', response.data.refresh_token);
+            }
+
+            localStorage.setItem('userInfo', JSON.stringify(updatedUserInfo));
+            setUser(updatedUserInfo);
+            setSuccess(response.data.message || "پروفایل شما با موفقیت به‌روزرسانی شد.");
+            setEditMode(false);
+        } catch (err) {
+            setError(err.response?.data?.message || "خطا در به‌روزرسانی پروفایل.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAddToWallet = async () => {
+        if (!walletAmount || Number(walletAmount) <= 0 || !Number.isFinite(Number(walletAmount))) {
+            setError("لطفاً یک مبلغ معتبر وارد کنید.");
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        setSuccess(null);
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await axios.patch(
+                'http://localhost:8000/api-test/user-update-profile/',
+                {add_to_wallet_balance: parseInt(walletAmount, 10)},
+                {headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'}}
+            );
+            const updatedUserInfo = response.data.user_info;
+            localStorage.setItem('userInfo', JSON.stringify(updatedUserInfo));
+            setUser(updatedUserInfo);
+            setSuccess(`مبلغ ${Number(walletAmount).toLocaleString()} تومان با موفقیت به کیف پول شما اضافه شد.`);
+            setWalletAmount('');
+        } catch (err) {
+            setError(err.response?.data?.message || "خطا در افزایش موجودی.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (loading && !user) return <Box sx={{display: 'flex', justifyContent: 'center', mt: 5}}><CircularProgress/></Box>;
+    if (error && !user) return <Container><Alert severity="error" sx={{mt: 4}}>{error}</Alert></Container>;
+    if (!user) return null;
+
     return (
-      <Container sx={{ textAlign: 'center', mt: 5 }}>
-        <CircularProgress />
-        <Typography>در حال بارگذاری پروفایل...</Typography>
-      </Container>
+        <Container maxWidth="lg" sx={{mt: 4, mb: 4}}>
+            <Paper elevation={3}
+                   sx={{p: {xs: 2, md: 4}, mb: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap'}}>
+                <Avatar sx={{width: 90, height: 90, mr: 3, bgcolor: 'primary.main', fontSize: '2.5rem'}}>
+                    {user.name ? user.name.charAt(0) : <PersonIcon sx={{fontSize: 50}}/>}
+                </Avatar>
+                <Box sx={{flexGrow: 1}}>
+                    <Typography variant="h4" component="h1">{user.name}</Typography>
+                    <Typography variant="subtitle1" color="text.secondary">{user.email}</Typography>
+                </Box>
+            </Paper>
+
+            {error && <Alert severity="error" sx={{mb: 2}}>{error}</Alert>}
+            {success && <Alert severity="success" sx={{mb: 2}}>{success}</Alert>}
+
+            <Box sx={{borderBottom: 1, borderColor: 'divider'}}>
+                <Tabs value={activeTab} onChange={handleTabChange} aria-label="profile tabs">
+                    <Tab label="اطلاعات شخصی"/>
+                    <Tab label="تنظیمات حساب و امنیت"/>
+                    <Tab label="مدیریت کیف پول"/>
+                </Tabs>
+            </Box>
+
+            <Box component="form" onSubmit={handleUpdateProfile}>
+                {activeTab === 0 && (
+                    <Paper elevation={0} sx={{p: 3, mt: 3}}>
+                        <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2}}>
+                            <Typography variant="h6">اطلاعات شخصی</Typography>
+                            <Button variant={editMode ? "text" : "outlined"} startIcon={editMode ? null : <EditIcon/>}
+                                    onClick={() => setEditMode(!editMode)}>
+                                {editMode ? 'لغو' : 'ویرایش'}
+                            </Button>
+                        </Box>
+                        <Divider sx={{mb: 3}}/>
+                        <Grid container spacing={3}>
+                            <Grid item xs={12} md={6}><TextField fullWidth label="نام و نام خانوادگی" name="name"
+                                                                 value={formData.name} onChange={handleInputChange}
+                                                                 disabled={!editMode}/></Grid>
+                            <Grid item xs={12} md={6}><TextField fullWidth label="شماره تلفن" name="phone_number"
+                                                                 value={formData.phone_number}
+                                                                 onChange={handleInputChange}
+                                                                 disabled={!editMode}/></Grid>
+                            <Grid item xs={12} md={6}>
+                                <FormControl fullWidth disabled={!editMode}>
+                                    <InputLabel>شهر</InputLabel>
+                                    <Select name="city_id" value={formData.city_id || ''} label="شهر"
+                                            onChange={handleInputChange}>
+                                        <MenuItem value=""><em>انتخاب نشده</em></MenuItem>
+                                        {cities.map(city => <MenuItem key={city.location_id}
+                                                                      value={city.location_id}>{city.province} - {city.city}</MenuItem>)}
+                                    </Select>
+                                </FormControl>
+                            </Grid>
+                            <Grid item xs={12} md={6}><TextField fullWidth label="تاریخ تولد" name="date_of_birth"
+                                                                 type="date" value={formData.date_of_birth || ''}
+                                                                 onChange={handleInputChange} disabled={!editMode}
+                                                                 InputLabelProps={{shrink: true}}/></Grid>
+                        </Grid>
+                    </Paper>
+                )}
+
+                {activeTab === 1 && (
+                    <Paper elevation={0} sx={{p: 3, mt: 3}}>
+                        <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2}}>
+                            <Typography variant="h6">تنظیمات حساب و امنیت</Typography>
+                            {!editMode && <Button variant="outlined" startIcon={<EditIcon/>}
+                                                  onClick={() => setEditMode(true)}>ویرایش</Button>}
+                        </Box>
+                        <Divider sx={{mb: 3}}/>
+                        <Grid container spacing={3}>
+                            <Grid item xs={12} md={6}><TextField fullWidth label="نام کاربری جدید" name="new_username"
+                                                                 value={formData.new_username}
+                                                                 onChange={handleInputChange} disabled={!editMode}
+                                                                 helperText="برای تغییر، نام کاربری جدید را وارد کنید"/></Grid>
+                            <Grid item xs={12} md={6}><TextField fullWidth label="ایمیل جدید" name="new_email"
+                                                                 type="email" value={formData.new_email}
+                                                                 onChange={handleInputChange} disabled={!editMode}
+                                                                 helperText="برای تغییر، ایمیل جدید را وارد کنید"/></Grid>
+                            <Grid item xs={12} md={6}><TextField fullWidth label="رمز عبور جدید" name="new_password"
+                                                                 type="password" value={formData.new_password}
+                                                                 onChange={handleInputChange} disabled={!editMode}
+                                                                 helperText="برای تغییر، رمز عبور جدید را وارد کنید"/></Grid>
+                            <Grid item xs={12} md={6}>
+                                <FormControl fullWidth disabled={!editMode}>
+                                    <InputLabel>روش ورود پیش‌فرض</InputLabel>
+                                    <Select name="authentication_method" value={formData.authentication_method}
+                                            label="روش ورود پیش‌فرض" onChange={handleInputChange}>
+                                        <MenuItem value="EMAIL">ایمیل</MenuItem>
+                                        <MenuItem value="PHONE_NUMBER">شماره تلفن</MenuItem>
+                                    </Select>
+                                </FormControl>
+                            </Grid>
+                        </Grid>
+                    </Paper>
+                )}
+
+                {editMode && (
+                    <Box sx={{mt: 3, display: 'flex', justifyContent: 'flex-end'}}>
+                        <Button type="submit" startIcon={<SaveIcon/>} variant="contained" disabled={loading}>
+                            {loading ? <CircularProgress size={24}/> : 'ذخیره تمام تغییرات'}
+                        </Button>
+                    </Box>
+                )}
+            </Box>
+
+            {activeTab === 2 && (
+                <Paper elevation={0} sx={{p: 3, mt: 3}}>
+                    <Typography variant="h6" gutterBottom>مدیریت کیف پول</Typography>
+                    <Divider sx={{mb: 3}}/>
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        p: 2,
+                        background: 'linear-gradient(to right, #43a047, #66bb6a)',
+                        color: 'white',
+                        borderRadius: 2,
+                        mb: 3
+                    }}>
+                        <AccountBalanceWalletIcon sx={{mr: 2, fontSize: '2.5rem'}}/>
+                        <Box>
+                            <Typography>موجودی فعلی</Typography>
+                            <Typography variant="h5">{(user.wallet_balance || 0).toLocaleString()} تومان</Typography>
+                        </Box>
+                    </Box>
+                    <Typography variant="subtitle1" sx={{mb: 1}}>افزایش موجودی:</Typography>
+                    <TextField fullWidth label="مبلغ" name="walletAmount" type="number" value={walletAmount}
+                               onChange={(e) => setWalletAmount(e.target.value)}
+                               InputProps={{endAdornment: <InputAdornment position="end">تومان</InputAdornment>}}/>
+                    <Button fullWidth variant="contained" color="success" startIcon={<AddCircleOutlineIcon/>}
+                            sx={{mt: 2}} onClick={handleAddToWallet} disabled={loading}>
+                        {loading ? <CircularProgress size={24}/> : 'افزایش موجودی'}
+                    </Button>
+                </Paper>
+            )}
+            <Button
+                variant="outlined"
+                color="secondary"
+                sx={{mt: 2}}
+                onClick={() => navigate(-1)}
+            >
+                بازگشت
+            </Button>
+        </Container>
+
     );
-  }
-
-  return (
-    <Container maxWidth="sm" sx={{ mt: 5 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" gutterBottom>پروفایل کاربری</Typography>
-        <Button component={Link} to="/" variant="outlined">
-          بازگشت به صفحه اصلی
-        </Button>
-      </Box>
-
-      {error && <Alert severity="error">{error}</Alert>}
-      {success && <Alert severity="success">{success}</Alert>}
-
-      <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>وضعیت فعلی پروفایل</Typography>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <TextField label="نام کامل" value={profile.name || ''} disabled />
-        <TextField label="نام کاربری" value={profile.username || ''} disabled />
-        <TextField label="ایمیل" value={profile.email || ''} disabled />
-        <TextField label="شماره تلفن" value={profile.phone_number || ''} disabled />
-        <TextField label="تاریخ تولد" value={profile.date_of_birth || ''} disabled />
-        <TextField label="موجودی کیف پول" value={`${profile.wallet_balance || 0} تومان`} disabled />
-        <TextField label="روش احراز هویت" value={profile.authentication_method || ''} disabled />
-      </Box>
-
-      <Divider sx={{ my: 4 }} />
-
-      <Typography variant="h6" sx={{ mb: 2 }}>به‌روزرسانی پروفایل</Typography>
-      <Box component="form" onSubmit={handleUpdate} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <TextField name="name" label="نام کامل جدید" value={editableProfile.name || ''} onChange={handleEditableChange} />
-        <TextField name="username" label="نام کاربری جدید" value={editableProfile.username || ''} onChange={handleEditableChange} helperText="در صورت تغییر، باید دوباره وارد شوید." />
-        <TextField name="email" label="ایمیل جدید" value={editableProfile.email || ''} onChange={handleEditableChange} />
-        <TextField name="phone_number" label="شماره تلفن جدید" value={editableProfile.phone_number || ''} onChange={handleEditableChange} />
-        <TextField name="date_of_birth" label="تاریخ تولد جدید" type="date" value={editableProfile.date_of_birth || ''} onChange={handleEditableChange} InputLabelProps={{ shrink: true }} />
-        <TextField name="newPassword" label="رمز عبور جدید" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} helperText="در صورت تغییر، باید دوباره وارد شوید." />
-        <TextField name="add_to_wallet_balance" label="افزایش موجودی کیف پول" type="number" value={addToWallet} onChange={(e) => setAddToWallet(e.target.value)} />
-        <FormControl fullWidth>
-          <InputLabel>روش احراز هویت جدید</InputLabel>
-          <Select name="authentication_method" value={editableProfile.authentication_method || ''} onChange={handleEditableChange} label="روش احراز هویت جدید">
-            <MenuItem value="EMAIL">ایمیل</MenuItem>
-            <MenuItem value="PHONE_NUMBER">شماره تلفن</MenuItem>
-          </Select>
-        </FormControl>
-        <Button type="submit" variant="contained" disabled={isUpdating} sx={{ mt: 3 }}>
-          {isUpdating ? <CircularProgress size={24} /> : 'به‌روزرسانی پروفایل'}
-        </Button>
-      </Box>
-    </Container>
-  );
-};
+}
 
 export default UserProfile;
