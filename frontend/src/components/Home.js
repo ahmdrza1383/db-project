@@ -1,8 +1,19 @@
 import React, {useState, useEffect} from 'react';
-import {Button} from '@mui/material';
+import {
+    Button, Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Typography,
+    Grid,
+    Divider,
+    Box,
+    Chip,
+} from '@mui/material';
 import {Link, useNavigate} from "react-router-dom";
 import axios from 'axios';
 import './Home.css';
+
 
 const Home = () => {
     const navigate = useNavigate();
@@ -195,6 +206,29 @@ const Home = () => {
         }
     };
 
+    const colorByStatus = (normalized) => {
+        switch (normalized) {
+            case "AVAILABLE":
+                return "success";
+            case "TEMPORARY":
+                return "warning";
+            case "OCCUPIED":
+                return "error";
+            default:
+                return "primary";
+        }
+    };
+    const normalizeSeatStatus = (status) => {
+        if (!status) return "AVAILABLE";
+        const s = String(status).toUpperCase();
+
+        if (s === "NOT_RESERVED" || s === "AVAILABLE") return "AVAILABLE";
+        if (s.includes("TEMP")) return "TEMPORARY";
+        if (["PAYED", "PAID", "RESERVED", "OCCUPIED"].includes(s)) return "OCCUPIED";
+
+        return "AVAILABLE";
+    };
+
     const handleReserveSeat = async (seatNumber) => {
         // فرض می کنیم accessToken اینجا در دسترس است
         const token = accessToken;
@@ -345,6 +379,64 @@ const Home = () => {
             setPaymentError('ارتباط با سرور برقرار نشد.');
         } finally {
             setPaymentLoading(false);
+        }
+    };
+
+    // در داخل کامپوننت Home، پس از تعریف سایر متدها
+    const handleConfirmReservation = async () => {
+        if (!isLoggedIn) {
+            alert('برای تأیید رزرو ابتدا باید وارد شوید.');
+            return;
+        }
+
+        if (!selectedSeat) {
+            alert('لطفاً یک صندلی انتخاب کنید.');
+            return;
+        }
+
+        setReservationLoading(true);
+        setReservationError(null);
+        setPaymentMessage(null);
+
+        try {
+            // فرض می‌کنیم اینجا باید رزرو موقت را به رزرو نهایی تبدیل کنیم
+            const requestBody = {
+                ticket_id: selectedTicket.ticket_id,
+                seat_number: selectedSeat,
+                reservation_id: tempReservationId, // اگر رزرو موقت قبلاً ایجاد شده باشد
+            };
+
+            const response = await fetch('http://localhost:8000/api-test/confirm-reservation/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify(requestBody),
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.status === 'success') {
+                setPaymentMessage('رزرو با موفقیت تأیید شد. لطفاً برای پرداخت اقدام کنید.');
+                // به‌روزرسانی وضعیت صندلی‌ها
+                setTicketReservations(prevReservations =>
+                    prevReservations.map(res =>
+                        res.reservation_seat === selectedSeat
+                            ? {...res, reservation_status: 'OCCUPIED'}
+                            : res
+                    )
+                );
+                setSelectedSeat(null); // ریست کردن صندلی انتخاب‌شده
+                // انتقال به بخش پرداخت (اختیاری)
+                setTempReservationId(data.reservation_id); // ذخیره ID رزرو برای پرداخت
+            } else {
+                setReservationError(data.message || 'خطا در تأیید رزرو');
+            }
+        } catch (err) {
+            setReservationError('ارتباط با سرور برقرار نشد.');
+        } finally {
+            setReservationLoading(false);
         }
     };
 
@@ -598,164 +690,178 @@ const Home = () => {
                 </div>
             </section>
 
-            {/* نمایش جزئیات بلیط فروخته نشده انتخاب شده (طراحی جدید) */}
             {selectedTicket && (
-                <section className="ticket-details-popup">
-                    {detailsLoading && <p>در حال بارگذاری جزئیات...</p>}
-                    {detailsError && <p style={{color: 'red'}}>خطا: {detailsError}</p>}
-                    {!detailsLoading && !detailsError && (
-                        <>
-                            <div className="details-header">
-                                <h2>جزئیات بلیط</h2>
-                                <button className="close-btn" onClick={() => setSelectedTicket(null)}>
-                                    ✖️
-                                </button>
-                            </div>
-                            <div className="details-body">
-                                <div className="detail-row">
-                                    <span>مبدا:</span>
-                                    <strong>{selectedTicket.origin_city}</strong>
-                                </div>
-                                <div className="detail-row">
-                                    <span>مقصد:</span>
-                                    <strong>{selectedTicket.destination_city}</strong>
-                                </div>
-                                <div className="detail-row">
-                                    <span>تاریخ حرکت:</span>
-                                    <strong>{selectedTicket.departure_start?.slice(0, 10)}</strong>
-                                </div>
-                                <div className="detail-row">
-                                    <span>قیمت:</span>
-                                    <strong>{selectedTicket.price.toLocaleString()} تومان</strong>
-                                </div>
-                                <div className="detail-row">
-                                    <span>ظرفیت باقی‌مانده:</span>
-                                    <strong>{selectedTicket.remaining_capacity}</strong>
-                                </div>
-                                <div className="detail-row">
-                                    <span>نوع وسیله نقلیه:</span>
-                                    <strong>{selectedTicket.vehicle_type}</strong>
-                                </div>
-                            </div>
+                <Dialog
+                    open={Boolean(selectedTicket)}
+                    onClose={() => setSelectedTicket(null)}
+                    maxWidth="md"
+                    fullWidth
+                    PaperProps={{sx: {borderRadius: 2, boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}}
+                >
+                    {/* هدر */}
+                    <DialogTitle
+                        sx={{fontWeight: "bold", backgroundColor: "#f0f4f8", textAlign: "center", color: "#333"}}>
+                        🎫 جزئیات بلیط
+                    </DialogTitle>
 
-                            {selectedTicket.vehicle_type === 'FLIGHT' && selectedTicket.vehicle_details && (
-                                <>
-                                    <div className="detail-row">
-                                        <span>خط هوایی:</span>
-                                        <strong>{selectedTicket.vehicle_details.airline_name}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>کلاس پرواز:</span>
-                                        <strong>{selectedTicket.vehicle_details.flight_class}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>تعداد توقف:</span>
-                                        <strong>{selectedTicket.vehicle_details.number_of_stop}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>کد پرواز:</span>
-                                        <strong>{selectedTicket.vehicle_details.flight_code}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>فرودگاه مبدا:</span>
-                                        <strong>{selectedTicket.vehicle_details.origin_airport}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>فرودگاه مقصد:</span>
-                                        <strong>{selectedTicket.vehicle_details.destination_airport}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>امکانات:</span>
-                                        <strong>{JSON.stringify(selectedTicket.vehicle_details.facility)}</strong>
-                                    </div>
-                                </>
-                            )}
-                            {selectedTicket.vehicle_type === 'TRAIN' && selectedTicket.vehicle_details && (
-                                <>
-                                    <div className="detail-row">
-                                        <span>ستاره قطار:</span>
-                                        <strong>{selectedTicket.vehicle_details.train_stars}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>انتخاب کوپه بسته:</span>
-                                        <strong>{selectedTicket.vehicle_details.choosing_a_closed_coupe ? 'بله' : 'خیر'}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>امکانات:</span>
-                                        <strong>{JSON.stringify(selectedTicket.vehicle_details.facility)}</strong>
-                                    </div>
-                                </>
-                            )}
-                            {selectedTicket.vehicle_type === 'BUS' && selectedTicket.vehicle_details && (
-                                <>
-                                    <div className="detail-row">
-                                        <span>نام شرکت:</span>
-                                        <strong>{selectedTicket.vehicle_details.company_name}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>نوع اتوبوس:</span>
-                                        <strong>{selectedTicket.vehicle_details.bus_type}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>تعداد صندلی‌ها:</span>
-                                        <strong>{selectedTicket.vehicle_details.number_of_chairs}</strong>
-                                    </div>
-                                    <div className="detail-row">
-                                        <span>امکانات:</span>
-                                        <strong>{JSON.stringify(selectedTicket.vehicle_details.facility)}</strong>
-                                    </div>
-                                </>
-                            )}
-                            <h3>رزروها</h3>
-                            <ul className="reservation-list">
-                                {selectedTicket.reservations
-                                    .sort((a, b) => a.reservation_id - b.reservation_id)
-                                    .map(res => (
-                                        <li key={res.reservation_id}>
-                                            <strong>شماره رزرو:</strong> {res.reservation_id}
-                                            <span>-</span>
-                                            <strong>وضعیت:</strong> {res.reservation_status}
-                                            <span>-</span>
-                                            <strong>صندلی:</strong> {res.reservation_seat}
-                                        </li>
-                                    ))}
-                            </ul>
+                    {/* محتوای اصلی */}
+                    <DialogContent dividers sx={{padding: "24px"}}>
+                        {/* اطلاعات کلی */}
+                        <Grid container spacing={3} sx={{backgroundColor: "#fff", borderRadius: 1, p: 2}}>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{
+                                    fontSize: "1rem",
+                                    color: "#555"
+                                }}><strong>مبدا:</strong> {selectedTicket.origin_city}</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{
+                                    fontSize: "1rem",
+                                    color: "#555"
+                                }}><strong>مقصد:</strong> {selectedTicket.destination_city}</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{fontSize: "1rem", color: "#555"}}><strong>تاریخ
+                                    حرکت:</strong> {selectedTicket.departure_start?.slice(0, 10)}</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{fontSize: "1rem", color: "#555"}}><strong>تاریخ
+                                    رسیدن:</strong> {selectedTicket.departure_end?.slice(0, 10) || "-"}</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{
+                                    fontSize: "1rem",
+                                    color: "#555"
+                                }}><strong>قیمت:</strong> {Number(selectedTicket.price || 0).toLocaleString()} تومان</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{fontSize: "1rem", color: "#555"}}><strong>ظرفیت
+                                    باقی‌مانده:</strong> {selectedTicket.remaining_capacity}</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <Typography sx={{fontSize: "1rem", color: "#555"}}><strong>نوع
+                                    وسیله:</strong> {selectedTicket.vehicle_type}</Typography>
+                            </Grid>
+                        </Grid>
 
-                            {/* نمایش صندلی‌ها برای انتخاب */}
-                            <h3>انتخاب صندلی</h3>
-                            {selectedTicket && (
-                                <div className="seat-selection-section">
-                                    <h3>انتخاب صندلی برای بلیط
-                                        از {selectedTicket.origin_city} به {selectedTicket.destination_city}</h3>
-                                    <div className="seat-buttons">
-                                        {ticketReservations.map((reservation) => (
-                                            <Button
-                                                key={reservation.reservation_seat}
-                                                variant="contained"
-                                                disabled={reservation.reservation_status !== "NOT_RESERVED"}
-                                                onClick={() => handleReserveSeat(reservation.reservation_seat)}
-                                                sx={{
-                                                    margin: '3px',
-                                                    padding: '6px 12px',
-                                                    fontSize: '0.8rem'
-                                                }}
-                                            >
-                                                صندلی {reservation.reservation_seat}
-                                            </Button>
-                                        ))}
-                                    </div>
-                                    <Button onClick={() => setSelectedTicket(null)}>بستن</Button>
-                                </div>
-                            )}
+                        {/* جزئیات وسیله نقلیه */}
+                        {selectedTicket.vehicle_type === "FLIGHT" && selectedTicket.vehicle_details && (
+                            <>
+                                <Divider sx={{my: 3}}/>
+                                <Typography variant="h6" sx={{paddingLeft: "20px", color: "#1976d2"}}>✈️ اطلاعات
+                                    پرواز</Typography>
+                                <Grid container spacing={2}
+                                      sx={{padding: "20px", backgroundColor: "#f9f9f9", borderRadius: 1}}>
+                                    <Grid item xs={6}><Typography sx={{fontSize: "1rem", color: "#555"}}>خط
+                                        هوایی: {selectedTicket.vehicle_details.airline_name}</Typography></Grid>
+                                    <Grid item xs={6}><Typography sx={{fontSize: "1rem", color: "#555"}}>کلاس
+                                        پرواز: {selectedTicket.vehicle_details.flight_class}</Typography></Grid>
+                                    <Grid item xs={6}><Typography sx={{
+                                        fontSize: "1rem",
+                                        color: "#555"
+                                    }}>توقف‌ها: {selectedTicket.vehicle_details.number_of_stop}</Typography></Grid>
+                                    <Grid item xs={6}><Typography sx={{fontSize: "1rem", color: "#555"}}>کد
+                                        پرواز: {selectedTicket.vehicle_details.flight_code}</Typography></Grid>
+                                </Grid>
+                            </>
+                        )}
 
+                        {selectedTicket.vehicle_type === "TRAIN" && selectedTicket.vehicle_details && (
+                            <>
+                                <Divider sx={{my: 3}}/>
+                                <Typography variant="h6" sx={{paddingLeft: "20px", color: "#1976d2"}}>🚆 اطلاعات
+                                    قطار</Typography>
+                                <Grid container spacing={2}
+                                      sx={{padding: "20px", backgroundColor: "#f9f9f9", borderRadius: 1}}>
+                                    <Grid item xs={6}><Typography sx={{fontSize: "1rem", color: "#555"}}>ستاره
+                                        قطار: {selectedTicket.vehicle_details.train_stars}</Typography></Grid>
+                                    <Grid item xs={6}><Typography sx={{fontSize: "1rem", color: "#555"}}>کوپه
+                                        بسته: {selectedTicket.vehicle_details.choosing_a_closed_coupe ? "بله" : "خیر"}</Typography></Grid>
+                                </Grid>
+                            </>
+                        )}
 
-                            {/* پیام رزرو */}
-                            {reservationLoading && <p>در حال رزرو صندلی...</p>}
-                            {reservationError && <p className="error-message">خطا در رزرو: {reservationError}</p>}
-                            {paymentMessage && <p className="success-message">{paymentMessage}</p>}
-                        </>
-                    )}
-                </section>
+                        {selectedTicket.vehicle_type === "BUS" && selectedTicket.vehicle_details && (
+                            <>
+                                <Divider sx={{my: 3}}/>
+                                <Typography variant="h6" sx={{paddingLeft: "20px", color: "#1976d2"}}>🚌 اطلاعات
+                                    اتوبوس</Typography>
+                                <Grid container spacing={2}
+                                      sx={{padding: "20px", backgroundColor: "#f9f9f9", borderRadius: 1}}>
+                                    <Grid item xs={6}><Typography sx={{
+                                        fontSize: "1rem",
+                                        color: "#555"
+                                    }}>شرکت: {selectedTicket.vehicle_details.company_name}</Typography></Grid>
+                                    <Grid item xs={6}><Typography sx={{fontSize: "1rem", color: "#555"}}>نوع
+                                        اتوبوس: {selectedTicket.vehicle_details.bus_type}</Typography></Grid>
+                                </Grid>
+                            </>
+                        )}
+
+                        <Divider sx={{my: 3}}/>
+
+                        {/* انتخاب صندلی */}
+                        <Typography variant="h6" gutterBottom sx={{paddingLeft: "20px", color: "#1976d2"}}>🪑 انتخاب
+                            صندلی</Typography>
+
+                        <Box sx={{display: "flex", gap: 2, mb: 2, paddingLeft: "20px", alignItems: "center"}}>
+                            <Chip label="در دسترس" color="success" sx={{fontSize: "0.9rem"}}/>
+                            <Chip label="رزرو موقت" color="warning" sx={{fontSize: "0.9rem"}}/>
+                            <Chip label="رزرو شده" color="error" sx={{fontSize: "0.9rem"}}/>
+                        </Box>
+
+                        <Grid container spacing={1} sx={{padding: "20px", justifyContent: "center"}}>
+                            {ticketReservations.sort((a, b) => a.reservation_seat - b.reservation_seat).map((res) => {
+                                const norm = normalizeSeatStatus(res.reservation_status);
+                                const muiColor = colorByStatus(norm);
+                                const buttonColor = norm === "AVAILABLE" ? "#4caf50" : norm === "TEMPORARY" ? "#ff9800" : "#f44336";
+                                return (
+                                    <Button
+
+                                        size="medium"
+                                        variant="contained"
+                                        disabled={norm !== "AVAILABLE"}
+                                        onClick={() => handleReserveSeat(res.reservation_seat)}
+                                        sx={{
+                                            backgroundColor: buttonColor,
+                                            color: "#fff",
+                                            borderRadius: 1,
+                                            boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                                            "&:hover": {
+                                                backgroundColor: norm === "AVAILABLE" ? "#45a049" : buttonColor,
+                                            },
+                                            fontSize: "1rem",
+                                            padding: "8px",
+
+                                            "&.Mui-disabled": {
+                                                backgroundColor: buttonColor,
+                                                color: "rgba(255, 255, 255, 0.7)",
+                                            },
+                                        }}
+                                    >
+                                        {res.reservation_seat}
+                                    </Button>
+                                );
+                            })}
+                        </Grid>
+
+                        {/* پیام‌ها */}
+                        {reservationLoading && <Typography sx={{mt: 2, paddingLeft: "20px", color: "#757575"}}>⏳ در حال
+                            رزرو...</Typography>}
+                        {reservationError && <Typography color="error" sx={{mt: 2, paddingLeft: "20px"}}>⚠️
+                            خطا: {reservationError}</Typography>}
+                        {paymentMessage && <Typography color="success.main"
+                                                       sx={{mt: 2, paddingLeft: "20px"}}>{paymentMessage}</Typography>}
+                    </DialogContent>
+
+                    {/* دکمه‌های پایین */}
+                    <DialogActions sx={{padding: "20px", justifyContent: "flex-end"}}>
+                        <Button onClick={() => setSelectedTicket(null)} color="error" variant="contained"
+                                sx={{backgroundColor: "#f44336", "&:hover": {backgroundColor: "#d32f2f"}}}>
+                            بستن
+                        </Button>
+                    </DialogActions>
+                </Dialog>
             )}
 
             {/* بخش پرداخت به خارج از شرط selectedTicket منتقل شد */}
