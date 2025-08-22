@@ -28,23 +28,32 @@ function UserProfile() {
     const loadInitialData = useCallback(async () => {
         setLoading(true);
         try {
-            const userInfoString = localStorage.getItem('userInfo');
-            if (!userInfoString) throw new Error("اطلاعات کاربری یافت نشد.");
-            const userInfo = JSON.parse(userInfoString);
-            setUser(userInfo);
+            const token = localStorage.getItem('accessToken');
+            if (!token) {
+                setError("توکن دسترسی یافت نشد. لطفاً دوباره وارد شوید.");
+                setLoading(false);
+                return;
+            }
 
+            // API call to get the latest user info from the database
+            const userResponse = await axios.get('http://localhost:8000/api-test/user-profile/', {
+                headers: {Authorization: `Bearer ${token}`}
+            });
+            const latestUserInfo = userResponse.data.user_info;
+
+            setUser(latestUserInfo);
             setFormData({
-                name: userInfo.name || '',
-                phone_number: userInfo.phone_number || '',
-                city_id: userInfo.city_id || '',
-                date_of_birth: userInfo.date_of_birth || '',
-                new_username: userInfo.username || '',
-                new_email: userInfo.email || '',
+                name: latestUserInfo.name || '',
+                phone_number: latestUserInfo.phone_number || '',
+                city_id: latestUserInfo.city_id || '',
+                date_of_birth: latestUserInfo.date_of_birth || '',
+                new_username: latestUserInfo.username || '',
+                new_email: latestUserInfo.email || '',
                 new_password: '',
-                authentication_method: userInfo.authentication_method || 'EMAIL',
+                authentication_method: latestUserInfo.authentication_method || 'EMAIL',
             });
 
-            const token = localStorage.getItem('accessToken');
+            // API call to get the list of cities
             const citiesResponse = await axios.get('http://localhost:8000/api-test/cities-list/', {
                 headers: {Authorization: `Bearer ${token}`}
             });
