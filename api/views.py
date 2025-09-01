@@ -1,5 +1,7 @@
+import os
 import redis
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
@@ -21,9 +23,11 @@ from datetime import datetime
 import json
 import smtplib
 from email.message import EmailMessage
+from elasticsearch import Elasticsearch, NotFoundError
 
 from .auth_utils import *
 from .tasks import expire_reservation
+from .elastic_utils import update_ticket_in_elastic
 
 
 def generate_otp(length=6):
@@ -788,6 +792,29 @@ def update_user_profile_view(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@token_required
+def get_user_profile_view(request):
+    """
+    Retrieves and returns the profile information for the authenticated user.
+    """
+    current_username = request.user_payload.get('sub')
+    if not current_username:
+        return JsonResponse({'status': 'error', 'message': 'Invalid token: Username not found in token payload.'},
+                            status=401)
+
+    try:
+        user_profile = get_user_profile(current_username)
+        if user_profile:
+            return JsonResponse({'status': 'success', 'user_info': user_profile})
+        else:
+            return JsonResponse({'status': 'error', 'message': 'User not found.'}, status=404)
+    except Exception as e:
+        print(f"Error fetching user profile: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
 def get_cities_list_view(request):
     """
     Retrieves a list of all cities and their corresponding provinces available in the system.
@@ -849,31 +876,26 @@ def get_cities_list_view(request):
 @require_http_methods(["POST"])
 def search_tickets_view(request):
     """
-    Allows users to search for available tickets based on various criteria using a POST request.
+    Searches for tickets using Elasticsearch based on various criteria.
 
-    Users can search by origin, destination, travel date, and vehicle type.
-    Results are cached in Redis in two layers:
-    1. Search Cache: Stores a list of ticket_ids matching the search filters.
-    2. Ticket Details Cache: Stores full details for each individual ticket_id.
-    This enables efficient cache invalidation for specific tickets.
-
-    Optional filters for price, transport company, departure time, and travel class
-    are also supported.
+    This endpoint receives a JSON payload with search filters and constructs a
+    dynamic query to search the 'tickets' index in Elasticsearch. It supports
+    required fields like origin, destination, and date, as well as a wide
+    range of optional filters for vehicle type, price, company, and specific
+    vehicle attributes.
 
     Request Body (JSON):
     {
         "origin_city": "Tehran",
         "destination_city": "Mashhad",
-        "departure_date": "2025-06-15",
-        "vehicle_type": "FLIGHT", // Optional: 'FLIGHT', 'TRAIN', 'BUS'
-        "min_price": 100000,     // Optional
-        "max_price": 500000,     // Optional
-        "company_name": "Mahan Air", // Optional (for Flight/Bus)
-        "min_departure_time": "08:00", // Optional: HH:MM for departure start
-        "max_departure_time": "18:00", // Optional: HH:MM for departure start
-        "flight_class": "Economy",   // Optional (for Flight)
-        "train_stars": 4,          // Optional (for Train)
-        "bus_type": "VIP"          // Optional (for Bus)
+        "departure_date": "2025-07-10",
+        "vehicle_type": "BUS",           // Optional: 'FLIGHT', 'TRAIN', 'BUS'
+        "min_price": 100000,             // Optional
+        "max_price": 500000,             // Optional
+        "company_name": "Hamsafar",      // Optional (for Flight/Bus)
+        "flight_class": "Economy",       // Optional (for Flight)
+        "train_stars": 4,                // Optional (for Train)
+        "bus_type": "VIP"                // Optional (for Bus)
     }
 
     Successful Response (JSON - Status Code: 200 OK):
@@ -881,353 +903,109 @@ def search_tickets_view(request):
         "status": "success",
         "data": [
             {
-                "ticket_id": 1,
+                "ticket_id": 22,
                 "origin_city": "Tehran",
-                "destination_city": "Mashhad",
-                "departure_start": "YYYY-MM-DDTHH:MM:SS",
-                "departure_end": "YYYY-MM-DDTHH:MM:SS",
-                "price": 500000,
-                "remaining_capacity": 20,
-                "vehicle_type": "FLIGHT",
-                "airline_name": "Mahan Air",
-                "flight_class": "Economy",
-                "number_of_stop": 0,
-                "flight_code": "IR-1234",
-                "origin_airport": "Mehrabad",
-                "destination_airport": "Mashhad",
-                "facility": {"meal": true}
-            },
-            // ... more tickets
+                "destination_city": "Qazvin",
+                // ... other ticket details
+            }
         ],
-        "cached": true/false // Indicates if response was from cache
+        "cached": false
     }
 
     Error Responses (JSON):
-    - Invalid JSON format:
-      {"status": "error", "message": "Invalid JSON format in request body."} (Status Code: 400)
-    - Missing required parameters:
-      {"status": "error", "message": "Missing required parameters: [param_names]"} (Status Code: 400)
-    - Invalid date format:
-      {"status": "error", "message": "Invalid departure_date format. Please use YYYY-MM-DD."} (Status Code: 400)
-    - Invalid time format:
-      {"status": "error", "message": "Invalid time format for min/max_departure_time. Please use HH:MM."} (Status Code: 400)
-    - Invalid price/star values:
-      {"status": "error", "message": "Price or stars must be positive integers."} (Status Code: 400)
-    - Invalid vehicle type:
-      {"status": "error", "message": "Invalid vehicle_type. Must be 'FLIGHT', 'TRAIN', or 'BUS'."} (Status Code: 400)
-    - Database error:
-      {"status": "error", "message": "A database error occurred during ticket search."} (Status Code: 500)
-    - Redis error:
-      {"status": "error", "message": "A Redis error occurred during caching."} (Status Code: 500)
-    - Unexpected server error:
-      {"status": "error", "message": "An unexpected error occurred."} (Status Code: 500)
+    - 400 Bad Request: For invalid JSON, missing required fields, or bad data formats.
+    - 500 Internal Server Error: For database or unexpected server errors.
+    - 503 Service Unavailable: If the connection to Elasticsearch fails.
     """
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format.'}, status=400)
 
-    origin_city = data.get('origin_city')
-    destination_city = data.get('destination_city')
-    departure_date_str = data.get('departure_date')
+    if not all(k in data for k in ['origin_city', 'destination_city', 'departure_date']):
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Missing required parameters: origin_city, destination_city, departure_date'
+        }, status=400)
 
-    vehicle_type = data.get('vehicle_type')
-    min_price = data.get('min_price')
-    max_price = data.get('max_price')
-    company_name = data.get('company_name')
-    min_departure_time_str = data.get('min_departure_time')
-    max_departure_time_str = data.get('max_departure_time')
-    flight_class = data.get('flight_class')
-    train_stars = data.get('train_stars')
-    bus_type = data.get('bus_type')
+    try:
+        es_host = os.environ.get("ELASTICSEARCH_HOST", "localhost")
+        es_client = Elasticsearch(
+            hosts=[{"host": es_host, "port": 9200, "scheme": "http"}]
+        )
+        if not es_client.ping():
+            raise ConnectionError("Could not connect to Elasticsearch")
+    except Exception as e:
+        print(f"Elasticsearch connection error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Search service is temporarily unavailable.'}, status=503)
 
-    required_params = {
-        'origin_city': origin_city,
-        'destination_city': destination_city,
-        'departure_date': departure_date_str,
+    search_query = {
+        "query": {
+            "bool": {
+                "must": [],
+                "filter": [
+                    {"term": {"ticket_status": True}}
+                ]
+            }
+        }
     }
-    missing_params = [key for key, value in required_params.items() if not value]
-    if missing_params:
-        return JsonResponse({'status': 'error', 'message': f'Missing required parameters: {", ".join(missing_params)}'},
+
+    search_query["query"]["bool"]["must"].append({"match": {"origin_city": data["origin_city"]}})
+    search_query["query"]["bool"]["must"].append({"match": {"destination_city": data["destination_city"]}})
+
+    try:
+        date_str = data['departure_date']
+        start_of_day = f"{date_str}T00:00:00"
+        end_of_day = f"{date_str}T23:59:59"
+        search_query["query"]["bool"]["filter"].append({
+            "range": {
+                "departure_start": {
+                    "gte": start_of_day,
+                    "lte": end_of_day,
+                    "format": "yyyy-MM-dd'T'HH:mm:ss"
+                }
+            }
+        })
+    except (ValueError, KeyError):
+        return JsonResponse({'status': 'error', 'message': 'Invalid date format for departure_date (YYYY-MM-DD).'},
                             status=400)
 
+    if data.get("vehicle_type"):
+        search_query["query"]["bool"]["filter"].append({"match": {"vehicle_type": data["vehicle_type"].upper()}})
+
+    price_range_query = {}
+    if data.get("min_price"):
+        price_range_query["gte"] = data["min_price"]
+    if data.get("max_price"):
+        price_range_query["lte"] = data["max_price"]
+    if price_range_query:
+        search_query["query"]["bool"]["filter"].append({"range": {"price": price_range_query}})
+
+    if data.get("company_name"):
+        search_query["query"]["bool"]["must"].append({
+            "multi_match": {
+                "query": data["company_name"],
+                "fields": ["airline_name", "company_name"],
+                "fuzziness": "AUTO"
+            }
+        })
+
+    if data.get("flight_class"):
+        search_query["query"]["bool"]["filter"].append({"term": {"flight_class.keyword": data["flight_class"]}})
+
+    if data.get("train_stars"):
+        search_query["query"]["bool"]["filter"].append({"term": {"train_stars": data["train_stars"]}})
+
+    if data.get("bus_type"):
+        search_query["query"]["bool"]["filter"].append({"term": {"bus_type.keyword": data["bus_type"]}})
+
     try:
-        departure_date = datetime.strptime(departure_date_str, '%Y-%m-%d').date()
-    except ValueError:
-        return JsonResponse(
-            {'status': 'error', 'message': 'Invalid departure_date format. Please use YYYY-MM-DD.'},
-            status=400
-        )
-
-    def validate_time_format(time_str):
-        if time_str:
-            try:
-                datetime.strptime(time_str, '%H:%M').time()
-                return True
-            except ValueError:
-                return False
-        return True
-
-    if not validate_time_format(min_departure_time_str) or not validate_time_format(max_departure_time_str):
-        return JsonResponse(
-            {'status': 'error', 'message': 'Invalid time format for min/max_departure_time. Please use HH:MM.'},
-            status=400)
-
-    numeric_params_validated = {}
-    for param_name, param_value in {'min_price': min_price, 'max_price': max_price, 'train_stars': train_stars}.items():
-        if param_value is not None:
-            try:
-                numeric_params_validated[param_name] = int(param_value)
-                if numeric_params_validated[param_name] <= 0:
-                    raise ValueError
-                if param_name == 'train_stars' and not (1 <= numeric_params_validated[param_name] <= 5):
-                    return JsonResponse({'status': 'error', 'message': 'train_stars must be between 1 and 5.'},
-                                        status=400)
-            except (ValueError, TypeError):
-                return JsonResponse({'status': 'error', 'message': f'{param_name} must be a positive integer.'},
-                                    status=400)
-
-    valid_vehicle_types = ['FLIGHT', 'TRAIN', 'BUS']
-    if vehicle_type and vehicle_type.upper() not in valid_vehicle_types:
-        return JsonResponse(
-            {'status': 'error', 'message': 'Invalid vehicle_type. Must be \'FLIGHT\', \'TRAIN\', or \'BUS\'.'},
-            status=400)
-
-    cache_key_data = {k: v for k, v in data.items() if v is not None}
-    search_results_cache_key = f"search_results:{json.dumps(cache_key_data, sort_keys=True)}"
-
-    cached_ticket_ids_json = None
-    if redis_client:
-        try:
-            cached_ticket_ids_json = redis_client.get(search_results_cache_key)
-        except redis.exceptions.RedisError as e:
-            print(f"Redis error during search results cache lookup for key {search_results_cache_key}: {e}")
-
-    if cached_ticket_ids_json:
-        try:
-            cached_ticket_ids = json.loads(cached_ticket_ids_json)
-            retrieved_tickets_from_cache = []
-            all_from_cache = True
-
-            for tid in cached_ticket_ids:
-                ticket_details_cache_key = f"ticket_details:{tid}"
-                ticket_details_json = redis_client.get(ticket_details_cache_key)
-                if ticket_details_json:
-                    try:
-                        retrieved_tickets_from_cache.append(json.loads(ticket_details_json))
-                    except json.JSONDecodeError:
-                        print(
-                            f"Corrupted ticket details cache for key {ticket_details_cache_key}. Re-fetching from DB.")
-                        all_from_cache = False
-                        break
-                else:
-                    all_from_cache = False
-                    break
-
-            if all_from_cache:
-                print(
-                    f"Serving search results (ticket IDs and details) from Redis cache for key: {search_results_cache_key}")
-                return JsonResponse({
-                    'status': 'success',
-                    'data': retrieved_tickets_from_cache,
-                    'cached': True
-                })
-        except json.JSONDecodeError:
-            print(f"Corrupted search results cache for key {search_results_cache_key}. Re-fetching from DB.")
-        except redis.exceptions.RedisError as e:
-            print(f"Redis error during retrieving individual ticket details from cache: {e}")
-
-
-    tickets_data = []
-    try:
-        with connection.cursor() as cursor:
-            base_query = """
-                         SELECT t.ticket_id, \
-                                origin_loc.city AS origin_city, \
-                                dest_loc.city   AS destination_city, \
-                                t.departure_start, \
-                                t.departure_end, \
-                                t.price, \
-                                t.remaining_capacity, \
-                                v.vehicle_type, \
-                                f.airline_name, \
-                                f.flight_class, \
-                                f.number_of_stop, \
-                                f.flight_code, \
-                                f.origin_airport, \
-                                f.destination_airport, \
-                                f.facility      AS flight_facility, \
-                                tr.train_stars, \
-                                tr.choosing_a_closed_coupe, \
-                                tr.facility     AS train_facility, \
-                                b.company_name, \
-                                b.bus_type, \
-                                b.number_of_chairs, \
-                                b.facility      AS bus_facility
-                         FROM tickets t
-                                  INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
-                                  INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
-                                  INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
-                                  LEFT JOIN flights f ON v.vehicle_id = f.vehicle_id AND v.vehicle_type = 'FLIGHT'
-                                  LEFT JOIN trains tr ON v.vehicle_id = tr.vehicle_id AND v.vehicle_type = 'TRAIN'
-                                  LEFT JOIN buses b ON v.vehicle_id = b.vehicle_id AND v.vehicle_type = 'BUS'
-                         WHERE origin_loc.city ILIKE %s \
-                           AND
-                             dest_loc.city ILIKE %s \
-                           AND
-                             DATE (t.departure_start) = %s \
-                           AND
-                             t.ticket_status = TRUE \
-                         """
-            query_params = [origin_city, destination_city, departure_date]
-
-            if vehicle_type:
-                base_query += " AND v.vehicle_type = %s"
-                query_params.append(vehicle_type.upper())
-
-            if 'min_price' in numeric_params_validated:
-                base_query += " AND t.price >= %s"
-                query_params.append(numeric_params_validated['min_price'])
-            if 'max_price' in numeric_params_validated:
-                base_query += " AND t.price <= %s"
-                query_params.append(numeric_params_validated['max_price'])
-
-            if min_departure_time_str:
-                base_query += " AND t.departure_start::time >= %s"
-                query_params.append(min_departure_time_str)
-            if max_departure_time_str:
-                base_query += " AND t.departure_start::time <= %s"
-                query_params.append(max_departure_time_str)
-
-            if company_name:
-                base_query += " AND (f.airline_name ILIKE %s OR b.company_name ILIKE %s)"
-                query_params.extend([f"%{company_name}%", f"%{company_name}%"])
-
-            if flight_class and (not vehicle_type or vehicle_type.upper() == 'FLIGHT'):
-                base_query += " AND f.flight_class ILIKE %s"
-                query_params.append(f"%{flight_class}%")
-
-            if 'train_stars' in numeric_params_validated and (not vehicle_type or vehicle_type.upper() == 'TRAIN'):
-                base_query += " AND tr.train_stars = %s"
-                query_params.append(numeric_params_validated['train_stars'])
-
-            if bus_type and (not vehicle_type or vehicle_type.upper() == 'BUS'):
-                base_query += " AND b.bus_type ILIKE %s"
-                query_params.append(f"%{bus_type}%")
-
-            base_query += " ORDER BY t.departure_start ASC;"
-
-            cursor.execute(base_query, query_params)
-            rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
-
-            found_ticket_ids = []
-            for row in rows:
-                ticket = dict(zip(columns, row))
-
-                if ticket.get('departure_start') and hasattr(ticket['departure_start'], 'isoformat'):
-                    ticket['departure_start'] = ticket['departure_start'].isoformat()
-                if ticket.get('departure_end') and hasattr(ticket['departure_end'], 'isoformat'):
-                    ticket['departure_end'] = ticket['departure_end'].isoformat()
-
-                vehicle_details = {}
-                current_vehicle_type = ticket['vehicle_type']
-
-                if current_vehicle_type == 'FLIGHT':
-                    vehicle_details['airline_name'] = ticket.pop('airline_name')
-                    vehicle_details['flight_class'] = ticket.pop('flight_class')
-                    vehicle_details['number_of_stop'] = ticket.pop('number_of_stop')
-                    vehicle_details['flight_code'] = ticket.pop('flight_code')
-                    vehicle_details['origin_airport'] = ticket.pop('origin_airport')
-                    vehicle_details['destination_airport'] = ticket.pop('destination_airport')
-                    facility_json = ticket.pop('flight_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                elif current_vehicle_type == 'TRAIN':
-                    vehicle_details['train_stars'] = ticket.pop('train_stars')
-                    vehicle_details['choosing_a_closed_coupe'] = ticket.pop('choosing_a_closed_coupe')
-                    facility_json = ticket.pop('train_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                elif current_vehicle_type == 'BUS':
-                    vehicle_details['company_name'] = ticket.pop('company_name')
-                    vehicle_details['bus_type'] = ticket.pop('bus_type')
-                    vehicle_details['number_of_chairs'] = ticket.pop('number_of_chairs')
-                    facility_json = ticket.pop('bus_facility')
-                    if facility_json:
-                        try:
-                            vehicle_details['facility'] = json.loads(facility_json)
-                        except json.JSONDecodeError:
-                            vehicle_details['facility'] = None
-                    else:
-                        vehicle_details['facility'] = None
-
-                ticket.pop('flight_facility', None)
-                ticket.pop('train_facility', None)
-                ticket.pop('bus_facility', None)
-
-                ticket.pop('airline_name', None)
-                ticket.pop('flight_class', None)
-                ticket.pop('number_of_stop', None)
-                ticket.pop('flight_code', None)
-                ticket.pop('origin_airport', None)
-                ticket.pop('destination_airport', None)
-                ticket.pop('train_stars', None)
-                ticket.pop('choosing_a_closed_coupe', None)
-                ticket.pop('company_name', None)
-                ticket.pop('bus_type', None)
-                ticket.pop('number_of_chairs', None)
-
-                ticket['vehicle_details'] = vehicle_details
-                tickets_data.append(ticket)
-                found_ticket_ids.append(ticket['ticket_id'])
-
-        response_data = {
-            'status': 'success',
-            'data': tickets_data,
-            'cached': False
-        }
-
-        if redis_client:
-            try:
-                cache_ttl_seconds = getattr(settings, 'TICKET_SEARCH_CACHE_TTL_SECONDS', 300)
-
-                redis_client.setex(search_results_cache_key, cache_ttl_seconds, json.dumps(found_ticket_ids))
-                print(
-                    f"Cached search results (ticket IDs) for key: {search_results_cache_key} with TTL: {cache_ttl_seconds}s")
-
-                for ticket_detail in tickets_data:
-                    ticket_details_cache_key = f"ticket_details:{ticket_detail['ticket_id']}"
-                    redis_client.setex(ticket_details_cache_key, cache_ttl_seconds, json.dumps(ticket_detail))
-                    print(
-                        f"Cached individual ticket details for key: {ticket_details_cache_key} with TTL: {cache_ttl_seconds}s")
-
-            except redis.exceptions.RedisError as e:
-                print(f"Redis error during caching search results or individual ticket details: {e}")
-            except Exception as e:
-                print(f"Error preparing data for Redis cache in search_tickets_view: {e}")
-
-        return JsonResponse(response_data, status=200)
-
-    except DatabaseError as e:
-        print(f"DatabaseError in search_tickets_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred during ticket search.'},
-                            status=500)
+        response = es_client.search(index="tickets", body=search_query, size=100)  # Increase size to get more results
+        results = [hit['_source'] for hit in response['hits']['hits']]
+        return JsonResponse({"status": "success", "data": results, "cached": False})
     except Exception as e:
-        print(f"Unexpected error in search_tickets_view: {e.__class__.__name__}: {e}")
-        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
+        print(f"Elasticsearch search error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An error occurred during the search.'}, status=500)
 
 
 @csrf_exempt
@@ -1413,6 +1191,47 @@ def get_ticket_details_view(request, ticket_id):
 
 
 @csrf_exempt
+@require_http_methods(["GET"])
+def available_tickets_view(request):
+    query = """
+        SELECT t.ticket_id,
+               t.departure_start,
+               t.price,
+               origin_loc.city AS origin_city,
+               dest_loc.city AS destination_city,
+               v.vehicle_type
+        FROM tickets t
+        INNER JOIN locations origin_loc ON t.origin_location_id = origin_loc.location_id
+        INNER JOIN locations dest_loc ON t.destination_location_id = dest_loc.location_id
+        INNER JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+        WHERE remaining_capacity > 0
+        ORDER BY t.departure_start ASC
+        LIMIT 100;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            tickets = []
+            for row in rows:
+                ticket = dict(zip(columns, row))
+                # تبدیل تاریخ به رشته ISO (اگر لازم بود)
+                if ticket.get('departure_start') and hasattr(ticket['departure_start'], 'isoformat'):
+                    ticket['departure_start'] = ticket['departure_start'].isoformat()
+                tickets.append(ticket)
+
+        return JsonResponse({'status': 'success', 'data': tickets})
+    except DatabaseError as e:
+        print(f"Database error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Database error occurred.'}, status=500)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Unexpected error occurred.'}, status=500)
+
+
+@csrf_exempt
 @require_http_methods(["POST"])
 @token_required
 def reserve_ticket_view(request):
@@ -1582,6 +1401,10 @@ def reserve_ticket_view(request):
                 if cursor.rowcount == 0:
                     raise DatabaseError(f"Failed to update remaining capacity for ticket ID {ticket_id}.")
 
+                transaction.on_commit(
+                    lambda: update_ticket_in_elastic(ticket_id, {"remaining_capacity": new_remaining_capacity})
+                )
+
             if reservation_id_to_monitor:
                 expiry_seconds = expiry_minutes_setting * 60
                 transaction.on_commit(
@@ -1592,37 +1415,6 @@ def reserve_ticket_view(request):
                 )
                 print(
                     f"Celery task scheduled for reservation_id {reservation_id_to_monitor} to run in {expiry_minutes_setting} minutes.")
-
-            if redis_client:
-                ticket_details_cache_key = f"ticket_details:{ticket_id}"
-                try:
-                    cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
-                    if cached_ticket_details_json:
-                        cached_ticket_data = json.loads(cached_ticket_details_json)
-
-                        cached_ticket_data['remaining_capacity'] = new_remaining_capacity
-
-                        current_ttl = redis_client.ttl(ticket_details_cache_key)
-                        if current_ttl > 0:
-                            redis_client.setex(
-                                ticket_details_cache_key,
-                                current_ttl,
-                                json.dumps(cached_ticket_data)
-                            )
-                            print(
-                                f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
-                        else:
-                            redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
-                            print(
-                                f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
-                    else:
-                        print(
-                            f"Ticket details for {ticket_id} not found in cache during reservation. Not updating cache.")
-
-                except redis.exceptions.RedisError as re_cache_err:
-                    print(f"Redis error during updating ticket details cache: {re_cache_err}")
-                except Exception as e:
-                    print(f"Error processing ticket details cache in reserve_ticket_view: {e}")
 
             if redis_client:
                 redis_key = f"temp_reservation:{reservation_id_to_monitor}"
@@ -1766,7 +1558,6 @@ class CancelReservationView(APIView):
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
 class CreateRequestView(APIView):
     """
     Allows a user to submit a request to either cancel or change the date of their reservation.
@@ -1900,13 +1691,11 @@ class CreateRequestView(APIView):
 def pay_ticket_view(request):
     """
     Handles payment for a temporarily reserved ticket.
-
     Only regular 'USER' roles are permitted to perform payments. 'ADMIN' roles are forbidden.
-    The system ONLY checks for the temporary reservation in Redis using its reservation_id.
-    If it's not found in Redis, it implies the reservation has expired or was never created,
-    and an error is returned.
+    The system checks for the temporary reservation in Redis. If it's not found,
+    it implies the reservation has expired.
 
-    ***ADDED CHECK: Cannot pay if ticket departure time is in the past (retrieved solely from Redis cache).***
+    ***ADDED CHECK: Cannot pay if ticket departure time is in the past.***
 
     Users can pay using 'WALLET', 'CRYPTOCURRENCY', or 'CREDIT_CARD'.
     - If `payment_method` is 'WALLET', the system automatically determines
@@ -1916,9 +1705,6 @@ def pay_ticket_view(request):
 
     Upon successful payment, the reservation status is confirmed to 'RESERVED',
     a payment record is created, and a 'BUY' entry is added to reservation history.
-    If payment fails (e.g., insufficient wallet balance or user-provided 'UNSUCCESSFUL' status),
-    the temporary reservation status remains 'TEMPORARY', allowing user to retry payment
-    within the expiry window. The Celery task will eventually revert it if payment is not made.
 
     Request Headers:
         Authorization: Bearer <JWT_access_token>
@@ -1927,33 +1713,8 @@ def pay_ticket_view(request):
     {
         "reservation_id": 101,
         "payment_method": "WALLET",
-        "payment_status": "SUCCESSFUL"
+        "payment_status": "SUCCESSFUL" // Optional for WALLET, required for others
     }
-
-    Successful Response (JSON - Status Code: 200 OK):
-    {
-        "status": "success",
-        "message": "Payment successful. Reservation confirmed.",
-        "payment_details": { ... },
-        "reservation_history": { ... },
-        "new_wallet_balance": 1500000
-    }
-
-    Error Response (JSON - Status Code: 400 Bad Request):
-    {
-        "status": "error",
-        "message": "Payment failed: Insufficient wallet balance.",
-        "payment_details": { ... },
-        "reservation_history": { ... }
-    }
-
-    Error Responses (JSON - other common errors):
-    - 400 Bad Request: Invalid JSON, missing required fields, invalid payment_method, etc.
-    - 401 Unauthorized: Token missing or invalid.
-    - 403 Forbidden: User role is not 'USER' or reservation does not belong to the user.
-    - 404 Not Found: Temporary reservation not found in Redis for the given reservation_id.
-    - 409 Conflict: Reservation is not in TEMPORARY status (e.g., already paid or reverted by Celery).
-    - 500 Internal Server Error: Database or unexpected server errors.
     """
     current_username = request.user_payload.get('sub')
     user_role = request.user_payload.get('role')
@@ -1997,44 +1758,10 @@ def pay_ticket_view(request):
     payment_details_for_response = {}
     history_details_for_response = {}
     new_wallet_balance = None
-
     actual_ticket_price_for_transaction = None
 
-    if payment_method_upper == 'WALLET':
-        if user_provided_payment_status is not None:
-            return JsonResponse({'status': 'error',
-                                 'message': 'Payment status cannot be provided for WALLET payments. It is determined automatically.'},
-                                status=400)
-    else:
-        if user_provided_payment_status is None:
-            return JsonResponse(
-                {'status': 'error', 'message': f'Payment status is required for {payment_method_upper} payments.'},
-                status=400)
-        user_provided_payment_status_upper = user_provided_payment_status.upper()
-        if user_provided_payment_status_upper not in ['SUCCESSFUL', 'UNSUCCESSFUL']:
-            return JsonResponse(
-                {'status': 'error', 'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
-                status=400)
-
-    try:
-        redis_client_local = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=0,
-            decode_responses=True
-        )
-        redis_client_local.ping()
-    except redis.exceptions.ConnectionError as e:
-        print(f"Could not connect to Redis within pay_ticket_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'Redis service unavailable. Cannot process payment.'},
-                            status=503)
-    except AttributeError:
-        print("Redis settings (REDIS_HOST, REDIS_PORT) not found in Django settings within pay_ticket_view.")
-        return JsonResponse({'status': 'error', 'message': 'Redis settings missing. Cannot process payment.'},
-                            status=500)
-
     redis_key = f"temp_reservation:{res_id}"
-    cached_data_json = redis_client_local.get(redis_key)
+    cached_data_json = redis_client.get(redis_key)
 
     if not cached_data_json:
         return JsonResponse({'status': 'error',
@@ -2053,28 +1780,8 @@ def pay_ticket_view(request):
             {'status': 'error', 'message': 'Forbidden: This temporary reservation does not belong to you.'}, status=403)
 
     actual_ticket_price_for_transaction = cached_reservation_data.get('ticket_price')
-    ticket_departure_start_str_from_cache = cached_reservation_data.get(
-        'ticket_departure_start')
-    if actual_ticket_price_for_transaction is None or ticket_departure_start_str_from_cache is None:
-        print(f"Error: Ticket price or departure time not found in Redis cache for reservation {res_id}.")
-        return JsonResponse({'status': 'error',
-                             'message': 'Ticket details missing from temporary reservation data in Redis. Cannot proceed.'},
-                            status=500)
-
-    try:
-        departure_start_time_from_cache = datetime.fromisoformat(ticket_departure_start_str_from_cache)
-        now_utc = datetime.now(timezone.utc)
-
-        if departure_start_time_from_cache.tzinfo is None:
-            departure_start_time_from_cache = departure_start_time_from_cache.replace(tzinfo=timezone.utc)
-
-        if departure_start_time_from_cache <= now_utc:
-            return JsonResponse({'status': 'error',
-                                 'message': 'Cannot pay for a ticket for a trip that has already started or passed. This temporary reservation will expire soon.'},
-                                status=409)
-    except ValueError as ve:
-        print(f"Error parsing departure time from cache for reservation {res_id}: {ve}")
-        return JsonResponse({'status': 'error', 'message': 'Corrupted departure time in temporary reservation data.'},
+    if actual_ticket_price_for_transaction is None:
+        return JsonResponse({'status': 'error', 'message': 'Ticket price missing from temporary reservation data.'},
                             status=500)
 
     try:
@@ -2105,22 +1812,16 @@ def pay_ticket_view(request):
                                          'message': f'Reservation status is {current_res_status_db}. Only TEMPORARY reservations can be paid. It might have expired or been processed.'},
                                         status=409)
 
-                ticket_id_from_redis_cache = cached_reservation_data.get('ticket_id')
-
-                if fetched_ticket_id_db != ticket_id_from_redis_cache:
-                    print(
-                        f"Warning: Ticket ID mismatch between Redis Cache ({ticket_id_from_redis_cache}) and DB ({fetched_ticket_id_db}) for reservation {res_id}. Proceeding with DB's ticket_id for integrity.")
-                    ticket_id_for_db_ops = fetched_ticket_id_db
-                else:
-                    ticket_id_for_db_ops = fetched_ticket_id_db
-
                 if payment_method_upper == 'WALLET':
+                    if user_provided_payment_status is not None:
+                        return JsonResponse({'status': 'error',
+                                             'message': 'Payment status cannot be provided for WALLET payments. It is determined automatically.'},
+                                            status=400)
                     if current_wallet_balance >= actual_ticket_price_for_transaction:
                         payment_successful_outcome = True
                         new_wallet_balance = current_wallet_balance - actual_ticket_price_for_transaction
                         cursor.execute("UPDATE users SET wallet_balance = %s WHERE username = %s;",
                                        [new_wallet_balance, current_username])
-
                         if redis_client:
                             try:
                                 invalidate_user_profile_cache(current_username)
@@ -2129,12 +1830,21 @@ def pay_ticket_view(request):
                                     f"User profile cache forcefully updated for '{current_username}' after successful wallet payment.")
                             except redis.exceptions.RedisError as re_cache_err:
                                 print(f"Redis error during cache update after payment: {re_cache_err}")
-
                     else:
                         payment_successful_outcome = False
                         new_wallet_balance = current_wallet_balance
-
                 else:
+                    if user_provided_payment_status is None:
+                        return JsonResponse(
+                            {'status': 'error',
+                             'message': f'Payment status is required for {payment_method_upper} payments.'},
+                            status=400)
+                    user_provided_payment_status_upper = user_provided_payment_status.upper()
+                    if user_provided_payment_status_upper not in ['SUCCESSFUL', 'UNSUCCESSFUL']:
+                        return JsonResponse(
+                            {'status': 'error',
+                             'message': 'Invalid payment_status. Must be SUCCESSFUL or UNSUCCESSFUL.'},
+                            status=400)
                     payment_successful_outcome = (user_provided_payment_status_upper == 'SUCCESSFUL')
 
                 payment_status_db = 'SUCCESSFUL' if payment_successful_outcome else 'UNSUCCESSFUL'
@@ -2188,14 +1898,9 @@ def pay_ticket_view(request):
 
                 if payment_successful_outcome:
                     redis_key_to_delete = f"temp_reservation:{res_id}"
-                    try:
-                        redis_client_local.delete(redis_key_to_delete)
-                        print(f"Temporary reservation {res_id} deleted from Redis due to successful payment.")
-                    except redis.exceptions.RedisError as re_del_err:
-                        print(f"Redis error during deletion of temp_reservation {res_id}: {re_del_err}")
+                    redis_client.delete(redis_key_to_delete)
 
         response_message = "Payment successful. Reservation confirmed." if payment_successful_outcome else "Payment failed. Please try again or use another payment method."
-        response_status_code = status.HTTP_200_OK if payment_successful_outcome else status.HTTP_400_BAD_REQUEST
 
         response_data = {
             'status': 'success' if payment_successful_outcome else 'error',
@@ -2203,19 +1908,16 @@ def pay_ticket_view(request):
             'payment_details': payment_details_for_response,
             'reservation_history': history_details_for_response
         }
-        if payment_method_upper == 'WALLET':
+        if payment_successful_outcome and payment_method_upper == 'WALLET':
             response_data['new_wallet_balance'] = int(new_wallet_balance)
 
-        return JsonResponse(response_data, status=response_status_code)
+        return JsonResponse(response_data,
+                            status=status.HTTP_200_OK if payment_successful_outcome else status.HTTP_400_BAD_REQUEST)
 
-    except Http404 as e:
-        return JsonResponse({'status': 'error', 'message': str(e)}, status=404)
-    except DatabaseError as e:
-        print(f"DatabaseError in pay_ticket_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred during the payment process.'},
-                            status=500)
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
     except Exception as e:
-        print(f"Unexpected error in pay_ticket_view: {e.__class__.__name__}: {e}")
+        print(f"Unexpected error in pay_ticket_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
 
 
@@ -2563,7 +2265,7 @@ def admin_approve_request_view(request, request_id):
                         request_submit_time = request_submit_time.replace(tzinfo=timezone.utc)
 
                     time_to_departure_from_request_submit = (
-                                                                        departure_start_time - request_submit_time).total_seconds() / 3600
+                                                                    departure_start_time - request_submit_time).total_seconds() / 3600
 
                     penalty_percentage = 10 if time_to_departure_from_request_submit > 1 else 50
                     penalty_amount = (data_dict['price'] * penalty_percentage) / 100
@@ -2592,37 +2294,11 @@ def admin_approve_request_view(request, request_id):
                         "UPDATE tickets SET remaining_capacity = %s WHERE ticket_id = %s;",
                         [new_remaining_capacity, data_dict['ticket_id']])
 
-                    if redis_client:
-                        ticket_details_cache_key = f"ticket_details:{data_dict['ticket_id']}"
-                        try:
-                            cached_ticket_details_json = redis_client.get(ticket_details_cache_key)
-                            if cached_ticket_details_json:
-                                cached_ticket_data = json.loads(cached_ticket_details_json)
-
-                                cached_ticket_data['remaining_capacity'] = new_remaining_capacity
-
-                                current_ttl = redis_client.ttl(ticket_details_cache_key)
-                                if current_ttl > 0:
-                                    redis_client.setex(
-                                        ticket_details_cache_key,
-                                        current_ttl,
-                                        json.dumps(cached_ticket_data)
-                                    )
-                                    print(
-                                        f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), preserving original TTL.")
-                                else:
-                                    redis_client.set(ticket_details_cache_key, json.dumps(cached_ticket_data))
-                                    print(
-                                        f"Updated ticket details cache for {ticket_details_cache_key} (remaining_capacity: {new_remaining_capacity}), no TTL changed.")
-                            else:
-                                print(
-                                    f"Ticket details for {data_dict['ticket_id']} not found in cache during cancellation. Not updating cache.")
-
-                        except redis.exceptions.RedisError as re_cache_err:
-                            print(
-                                f"Redis error during updating ticket details cache in admin_approve_request_view: {re_cache_err}")
-                        except Exception as e:
-                            print(f"Error processing ticket details cache in admin_approve_request_view: {e}")
+                    final_ticket_id = data_dict['ticket_id']
+                    transaction.on_commit(
+                        lambda: update_ticket_in_elastic(final_ticket_id,
+                                                         {"remaining_capacity": new_remaining_capacity})
+                    )
 
                     cursor.execute(
                         """
@@ -2818,18 +2494,22 @@ def get_user_bookings_view(request):
         SELECT
             rh.reservation_history_id AS history_id,
             rh.reservation_id,
+            rh.username,
+            res.username AS current_owner,
             rh.operation_type,
             rh.buy_status AS operation_status,
             rh.date_and_time AS operation_time,
             res.ticket_id,
             t.departure_start,
             loc_origin.city AS origin_city,
-            loc_dest.city AS destination_city
+            loc_dest.city AS destination_city,
+            v.vehicle_type AS vehicle_type
         FROM reservations_history rh
         JOIN reservations res ON rh.reservation_id = res.reservation_id
         JOIN tickets t ON res.ticket_id = t.ticket_id
         JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
         JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+        JOIN vehicles v ON t.vehicle_id = v.vehicle_id
         WHERE rh.username = %s
     """
     params = [current_username]
@@ -3002,36 +2682,15 @@ def report_ticket_issue_view(request):
 
         report_type_upper = report_type.upper()
 
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT reservation_id, username, reservation_status
-                    FROM reservations
-                    WHERE reservation_id = %s AND username = %s FOR UPDATE;
-                    """,
-                    [reservation_id, current_username]
-                )
-                reservation_info = cursor.fetchone()
-
-                if not reservation_info:
-                    return JsonResponse(
-                        {'status': 'error', 'message': 'Reservation not found or does not belong to you.'}, status=404)
-
-                res_id, res_username, res_status = reservation_info
-
-                if res_status not in ['RESERVED', 'TEMPORARY', 'CANCELED']:
-                    return JsonResponse(
-                        {'status': 'error', 'message': f'Cannot report for reservation in status: {res_status}.'},
-                        status=409)
-
-                insert_query = """
-                    INSERT INTO reports (username, reservation_id, report_type, report_text)
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING report_id, report_status;
-                """
-                cursor.execute(insert_query, [current_username, reservation_id, report_type_upper, report_text])
-                new_report_id, new_report_status = cursor.fetchone()
+        with connection.cursor() as cursor:
+            # اینجا دیگر نیازی به چک کردن وجود گزارش قبلی نیست
+            insert_query = """
+                INSERT INTO reports (username, reservation_id, report_type, report_text)
+                VALUES (%s, %s, %s, %s)
+                RETURNING report_id, report_status;
+            """
+            cursor.execute(insert_query, [current_username, reservation_id, report_type_upper, report_text])
+            new_report_id, new_report_status = cursor.fetchone()
 
         return JsonResponse({
             'status': 'success',
@@ -3046,19 +2705,8 @@ def report_ticket_issue_view(request):
             }
         }, status=201)
 
-    except json.JSONDecodeError:
-        return JsonResponse({'status': 'error', 'message': 'Invalid JSON format in request body.'}, status=400)
-    except IntegrityError as e:
-        print(f"IntegrityError in report_ticket_issue_view: {e}")
-        return JsonResponse({'status': 'error',
-                             'message': 'A data integrity error occurred. This report might already exist or reservation is invalid.'},
-                            status=409)
-    except DatabaseError as e:
-        print(f"DatabaseError in report_ticket_issue_view: {e}")
-        return JsonResponse({'status': 'error', 'message': 'A database error occurred while submitting your report.'},
-                            status=500)
     except Exception as e:
-        print(f"Unexpected error in report_ticket_issue_view: {e.__class__.__name__}: {e}")
+        print(f"Unexpected error in report_ticket_issue_view: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'},
                             status=500)
 
@@ -3377,3 +3025,100 @@ def admin_get_reports_view(request):
     except Exception as e:
         print(f"Unexpected error in admin_get_reports_view: {e.__class__.__name__}: {e}")
         return JsonResponse({'status': 'error', 'message': 'An unexpected server error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def get_report_status_view(request, reservation_id):
+    try:
+        current_username = request.user_payload.get('sub')
+
+        with connection.cursor() as cursor:
+            # کوئری را برای گرفتن تمام گزارش‌ها برای یک رزرو تغییر می‌دهیم
+            query = """
+                SELECT report_id, report_status, admin_response, report_text
+                FROM reports
+                WHERE reservation_id = %s AND username = %s;
+            """
+            cursor.execute(query, [reservation_id, current_username])
+            report_data = cursor.fetchall()
+
+            if not report_data:
+                return JsonResponse({'status': 'info', 'message': 'No report found for this reservation.'}, status=200)
+
+            columns = [col[0] for col in cursor.description]
+            reports_list = [dict(zip(columns, row)) for row in report_data]
+
+            return JsonResponse({'status': 'success', 'reports': reports_list}, status=200)
+
+    except Exception as e:
+        print(f"Error in get_report_status_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def get_temporary_reservations_view(request):
+    try:
+        current_username = request.user_payload.get('sub')
+        if not current_username:
+            return JsonResponse({'status': 'error', 'message': 'Invalid token: Username not found.'}, status=401)
+
+        with connection.cursor() as cursor:
+            query = """
+                SELECT res.reservation_id, res.reservation_seat, res.date_and_time_of_reservation, t.ticket_id, t.departure_start, t.price,
+                       loc_origin.city AS origin_city,
+                       loc_dest.city AS destination_city
+                FROM reservations res
+                JOIN tickets t ON res.ticket_id = t.ticket_id
+                JOIN locations loc_origin ON t.origin_location_id = loc_origin.location_id
+                JOIN locations loc_dest ON t.destination_location_id = loc_dest.location_id
+                WHERE res.username = %s AND res.reservation_status = 'TEMPORARY'
+            """
+            cursor.execute(query, [current_username])
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+            reservations = []
+            for row in rows:
+                reservation_dict = dict(zip(columns, row))
+                if reservation_dict.get('departure_start'):
+                    reservation_dict['departure_start'] = reservation_dict['departure_start'].isoformat()
+                reservations.append(reservation_dict)
+
+        return JsonResponse({'status': 'success', 'data': reservations}, status=200)
+
+    except DatabaseError as e:
+        print(f"Database error in get_temporary_reservations_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'A database error occurred.'}, status=500)
+    except Exception as e:
+        print(f"Unexpected error in get_temporary_reservations_view: {e}")
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@token_required
+def check_pending_request_view(request, reservation_id):
+    try:
+        current_username = request.user_payload.get('sub')
+
+        with connection.cursor() as cursor:
+            query = """
+                SELECT COUNT(*)
+                FROM requests
+                WHERE reservation_id = %s
+                  AND username = %s
+                  AND is_checked = FALSE;
+            """
+            cursor.execute(query, [reservation_id, current_username])
+            count = cursor.fetchone()[0]
+
+            has_pending_request = count > 0
+
+            return JsonResponse({'status': 'success', 'has_pending_request': has_pending_request}, status=200)
+
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': 'An unexpected error occurred.'}, status=500)

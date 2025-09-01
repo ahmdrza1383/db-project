@@ -10,6 +10,7 @@ urlpatterns = [
     path('user-signup/', views.user_signup_view, name='user-signup'),
     path('user-update-profile/', views.update_user_profile_view, name='user-update-profile'),
     path('ticket-details/<int:ticket_id>/', views.get_ticket_details_view, name='ticket-details'),
+    path('available-tickets/', views.available_tickets_view, name='available-tickets'),
     path('cities-list/', views.get_cities_list_view, name='cities-list'),
     path('search-tickets/', views.search_tickets_view, name='search-tickets'),
     path('reserve-ticket/', views.reserve_ticket_view, name='reserve-ticket'),
@@ -24,4 +25,9 @@ urlpatterns = [
     path('report-issue/', views.report_ticket_issue_view, name='report-issue'),
     path('admin/reports/<int:report_id>/manage/', views.admin_manage_report_view, name='admin-manage-report'),
     path('admin/reports/', views.admin_get_reports_view, name='admin-get-reports'),
+    path('user-profile/', views.get_user_profile_view, name='user-profile'),
+    path('report/status/<int:reservation_id>/', views.get_report_status_view, name='get-report-status'),
+    path('temporary-reservations/', views.get_temporary_reservations_view, name='get-temporary-reservations'),
+    path('reservations/pending-request/<int:reservation_id>/', views.check_pending_request_view, name='check-pending-request'),
+
 ]

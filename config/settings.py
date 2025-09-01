@@ -51,13 +51,16 @@ INSTALLED_APPS = [
 
     'rest_framework',
     'drf_spectacular',
+    'corsheaders',
 
     'pages',
     'users',
+
     'api',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -169,3 +172,11 @@ EMAIL_PORT = 587
 EMAIL_HOST_USER = 'safarbama9@gmail.com'
 EMAIL_HOST_PASSWORD = 'kyjr lkyh pddw rycg'
 EMAIL_USE_TLS = True
+
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+]
